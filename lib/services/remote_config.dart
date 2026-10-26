@@ -1,6 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io' show Platform;
+import 'package:granthprabandhan/compat/io.dart';
 
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';

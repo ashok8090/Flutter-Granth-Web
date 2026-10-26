@@ -4,7 +4,7 @@ library;
 
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
+import 'package:granthprabandhan/compat/io.dart';
 
 import '../config.dart';
 import '../services/remote_config.dart';

@@ -1,4 +1,4 @@
-import 'dart:io';
+import 'package:granthprabandhan/compat/io.dart';
 import 'dart:math' as math;
 import 'dart:ui' as ui;
 

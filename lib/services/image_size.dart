@@ -1,4 +1,4 @@
-import 'dart:io';
+import 'package:granthprabandhan/compat/io.dart';
 import 'dart:typed_data';
 
 /// Shape (width ÷ height) of a saved picture, read from its file header without decoding.

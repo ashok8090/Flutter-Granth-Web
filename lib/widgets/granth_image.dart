@@ -1,4 +1,4 @@
-import 'dart:io';
+import 'package:granthprabandhan/compat/io.dart';
 
 import 'package:flutter/material.dart';
 
@@ -12,6 +12,7 @@ import '../services/image_size.dart';
 import '../state/toast.dart';
 import '../theme/colors.dart';
 import 'common.dart';
+import 'disk_image.dart';
 
 class SaveMeta {
   const SaveMeta({required this.title, this.text = '', this.topic = '', this.granth = ''});
@@ -129,7 +130,7 @@ class _GranthImageState extends State<GranthImage> {
       img = thumb ? Skeleton(height: 52, width: 52, radius: radius) : Skeleton(radius: radius);
       if (_failed) img = Skeleton(height: thumb ? 52 : 120, width: thumb ? 52 : null, radius: radius);
     } else {
-      img = Image.file(
+      img = DiskImage(
         _file!,
         width: thumb ? 52 : double.infinity,
         height: thumb ? 52 : null,

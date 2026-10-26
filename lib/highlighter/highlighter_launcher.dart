@@ -3,10 +3,12 @@
 // its touch path (no PlatformView, no gesture arena), so the page gets the finger exactly like
 // Chrome. The rest of the app only calls [HighlighterLauncher.open].
 import 'dart:async';
-import 'dart:io';
+import 'package:granthprabandhan/compat/io.dart';
 
 import 'package:connectivity_plus/connectivity_plus.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../services/image_cache.dart';
 import '../services/native_bridge.dart';
@@ -65,6 +67,12 @@ class HighlighterLauncher {
     VoidCallback Function()? hold,
   }) async {
     if (_busy) return; // a second tap while it is opening
+    if (kIsWeb) {
+      final page = Uri.base.resolve('assets/assets/highlighter/index.html');
+      final ok = await launchUrl(page, webOnlyWindowName: '_blank');
+      if (!ok) Toast.show('Photo Highlighter नहीं खुल सका');
+      return;
+    }
     _busy = true;
     VoidCallback? release;
     try {

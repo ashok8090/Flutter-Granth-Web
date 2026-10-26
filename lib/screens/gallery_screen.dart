@@ -1,4 +1,4 @@
-import 'dart:io';
+import 'package:granthprabandhan/compat/io.dart';
 
 import 'package:flutter/material.dart';
 
@@ -12,6 +12,7 @@ import '../state/toast.dart';
 import '../state/ui_prefs.dart';
 import '../theme/colors.dart';
 import '../widgets/common.dart';
+import '../widgets/disk_image.dart';
 import '../widgets/zoom.dart';
 import '../widgets/live_panel.dart';
 import '../widgets/overlays.dart';
@@ -177,7 +178,7 @@ class _GalleryPanelState extends State<GalleryPanel> with LivePanel {
     if (!pdf) {
       media = ClipRRect(
         borderRadius: BorderRadius.circular(8),
-        child: Image.file(File(e.filePath), width: double.infinity, fit: BoxFit.fitWidth, cacheWidth: 900, errorBuilder: (_, _, _) => const Skeleton()),
+        child: DiskImage(File(e.filePath), width: double.infinity, fit: BoxFit.fitWidth, cacheWidth: 900, errorBuilder: (_, _, _) => const Skeleton()),
       );
     } else if (e.previewPath != null && File(e.previewPath!).existsSync()) {
       media = ClipRRect(
@@ -186,7 +187,7 @@ class _GalleryPanelState extends State<GalleryPanel> with LivePanel {
           color: GColors.paper,
           height: 180,
           width: double.infinity,
-          child: Image.file(File(e.previewPath!), fit: BoxFit.cover, alignment: Alignment.topCenter),
+          child: DiskImage(File(e.previewPath!), fit: BoxFit.cover, alignment: Alignment.topCenter),
         ),
       );
     } else {
@@ -293,7 +294,7 @@ class _GalleryViewer extends StatelessWidget {
                     height: h,
                     child: ZoomStage(
                       child: Center(
-                        child: ClipRRect(borderRadius: BorderRadius.circular(12), child: Image.file(File(d.filePath), fit: BoxFit.contain)),
+                        child: ClipRRect(borderRadius: BorderRadius.circular(12), child: DiskImage(File(d.filePath), fit: BoxFit.contain)),
                       ),
                     ),
                   ),

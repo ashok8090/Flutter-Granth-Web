@@ -137,6 +137,10 @@ class _GranthAppState extends State<GranthApp> with WidgetsBindingObserver {
     } catch (e) {
       debugPrint('links: initial: $e');
     }
+    if (kIsWeb) {
+      final here = Uri.base;
+      if (hashFromLink(here) != null) _safeOpen(here);
+    }
   }
 
   void _safeOpen(Uri u) {

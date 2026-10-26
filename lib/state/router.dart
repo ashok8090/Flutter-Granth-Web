@@ -258,12 +258,17 @@ class AppNav extends ChangeNotifier {
 
 /// Deep link → hash (`granth://open?topic=…`, `https://granth.grok.me/open?id=…`).
 String? hashFromLink(Uri u) {
-  final ok = (u.scheme == 'granth') || ((u.scheme == 'https' || u.scheme == 'http') && u.host == 'granth.grok.me' && u.path.startsWith('/open'));
-  if (!ok) return null;
   final q = u.queryParameters;
-  if ((q['topic'] ?? '').isNotEmpty) return '#/pramans?topic=${q['topic']}';
-  if ((q['granth'] ?? '').isNotEmpty) return '#/pramans?granth=${q['granth']}';
-  if ((q['id'] ?? '').isNotEmpty) return '#/pramans?id=${q['id']}';
+  final topic = q['topic'] ?? '';
+  final granth = q['granth'] ?? '';
+  final id = q['id'] ?? '';
+  final has = topic.isNotEmpty || granth.isNotEmpty || id.isNotEmpty;
+  final appLink = (u.scheme == 'granth') || ((u.scheme == 'https' || u.scheme == 'http') && u.host == 'granth.grok.me' && u.path.startsWith('/open'));
+  // The website is opened at /app/index.html?granth=… as well as /open.
+  if (!appLink && !(kIsWeb && has)) return null;
+  if (topic.isNotEmpty) return '#/pramans?topic=$topic';
+  if (granth.isNotEmpty) return '#/pramans?granth=$granth';
+  if (id.isNotEmpty) return '#/pramans?id=$id';
   if (u.fragment.startsWith('/')) return '#${u.fragment}';
   return '#/dashboard';
 }

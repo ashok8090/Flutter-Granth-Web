@@ -1,6 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
+import 'package:granthprabandhan/compat/io.dart';
 import 'dart:isolate';
 import 'dart:typed_data';
 

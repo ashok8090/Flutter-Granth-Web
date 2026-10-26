@@ -1,6 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io' show Platform, gzip;
+import 'package:granthprabandhan/compat/io.dart';
 import 'dart:math' as math;
 import 'dart:typed_data';
 

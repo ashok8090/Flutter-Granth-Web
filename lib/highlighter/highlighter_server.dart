@@ -11,7 +11,7 @@
 // A fixed port keeps the page's own storage (album in IndexedDB, theme) between visits.
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
+import 'package:granthprabandhan/compat/io.dart';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';

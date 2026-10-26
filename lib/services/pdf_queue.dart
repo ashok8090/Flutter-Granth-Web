@@ -1,5 +1,5 @@
 import 'dart:async';
-import 'dart:io';
+import 'package:granthprabandhan/compat/io.dart';
 import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';

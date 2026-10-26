@@ -23,6 +23,10 @@ dependencies:
   unorm_dart: ^0.3.0
   url_launcher: ^6.3.1
   webview_flutter: ^4.13.0
+  idb_shim: ^2.11.1
+  ed25519_edwards: ^0.3.2
+  crypto: ^3.0.8
+  archive: ^4.5.2
 
 dev_dependencies:
   flutter_test:

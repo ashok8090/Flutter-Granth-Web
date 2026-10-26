@@ -1,9 +1,12 @@
-import 'dart:io';
+import 'package:granthprabandhan/compat/io.dart';
 import 'dart:typed_data';
 
+import 'package:flutter/foundation.dart';
 import 'package:open_filex/open_filex.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
+
+import '../compat/download_io.dart' if (dart.library.html) '../compat/download_web.dart';
 
 import 'native_bridge.dart';
 import 'storage.dart';
@@ -118,6 +121,10 @@ class FileActions {
       return null;
     }
     final mime = mimeOf(name);
+    if (kIsWeb) {
+      final bytes = await local.readAsBytes();
+      return saveBrowser(safeName(name), bytes, mime);
+    }
     return isPdf(name)
         ? await NativeBridge.copyToDownloads(local.path, safeName(name), mime)
         : await NativeBridge.saveImageToAlbum(local.path, safeName(name), mime);
@@ -126,13 +133,22 @@ class FileActions {
   /// `Ce()` — open a PDF with the system viewer.
   static Future<bool> open(String sourcePath, String name) async {
     final local = await ensureLocal(sourcePath, name);
+    if (kIsWeb) {
+      final bytes = await local.readAsBytes();
+      await saveBrowser(safeName(name), bytes, mimeOf(name), open: true);
+      return true;
+    }
     final r = await OpenFilex.open(local.path, type: mimeOf(name));
     return r.type == ResultType.done;
   }
 
-  /// `Se()` — share a saved file.
   static Future<void> shareFile(String sourcePath, String name) async {
     final local = await ensureLocal(sourcePath, name);
+    if (kIsWeb) {
+      final bytes = await local.readAsBytes();
+      await SharePlus.instance.share(ShareParams(files: [XFile.fromData(bytes, mimeType: mimeOf(name), name: safeName(name))], title: name));
+      return;
+    }
     await SharePlus.instance.share(ShareParams(files: [XFile(local.path, mimeType: mimeOf(name), name: safeName(name))], title: name));
   }
 

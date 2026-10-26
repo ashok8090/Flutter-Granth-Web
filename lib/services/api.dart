@@ -27,7 +27,7 @@ String? mediaPath(String? input) {
   return _mediaPath.hasMatch(t) ? t : null;
 }
 
-String mediaUrl(String path) => '$kOrigin/$path';
+String mediaUrl(String path) => kIsWeb ? '${Uri.base.origin}/api/media?src=${Uri.encodeComponent(path)}' : '$kOrigin/$path';
 
 /// `ge()` — share link used by the original app.
 String shareLink(String kind, String id) => id.isEmpty ? 'granth://open' : '$kShareBase?${kind == 'praman' ? 'id' : kind}=${Uri.encodeComponent(id)}';
@@ -56,7 +56,7 @@ class Api {
     // The server answers JSON with `Content-Type: text/html`, so Dio would hand back a raw
     // String for ResponseType.json. Always read plain text and decode it ourselves.
     final r = await dio.get<dynamic>(
-      '$kOrigin/api/index.php',
+      kIsWeb ? '${Uri.base.origin}/api/granth' : '$kOrigin/api/index.php',
       queryParameters: {'request': request},
       options: Options(responseType: ResponseType.plain),
     );

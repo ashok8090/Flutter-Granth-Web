@@ -1,9 +1,10 @@
 import 'dart:async';
-import 'dart:io';
+import 'package:granthprabandhan/compat/io.dart';
 
 import 'package:dio/dio.dart';
-import 'package:dio/io.dart';
 import 'package:flutter/foundation.dart';
+
+import '../compat/net_io.dart' if (dart.library.html) '../compat/net_web.dart';
 
 import 'api.dart';
 import 'pdf_stream.dart' show jpegComplete;
@@ -27,17 +28,12 @@ class ImageStore {
   // own connections, so they never queue behind the background download of the library.
   final Dio _fast = _client();
 
-  static Dio _client() => Dio(BaseOptions(
+  static Dio _client() => attachIo(Dio(BaseOptions(
         connectTimeout: const Duration(seconds: 20),
         // Time without any data arriving (not the whole download): a slow but moving
         // download of a big page is never cut off; a dead connection fails in 30 s.
         receiveTimeout: const Duration(seconds: 30),
-      ))
-        ..httpClientAdapter = IOHttpClientAdapter(
-          createHttpClient: () => HttpClient()
-            ..maxConnectionsPerHost = 8
-            ..idleTimeout = const Duration(seconds: 30),
-        );
+      )));
 
   final Map<String, Future<File?>> _inflight = {};
 

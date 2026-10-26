@@ -5,7 +5,7 @@
 library;
 
 import 'dart:async';
-import 'dart:io';
+import 'package:granthprabandhan/compat/io.dart';
 
 import '../services/storage.dart';
 

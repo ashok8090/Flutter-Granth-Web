@@ -1,4 +1,4 @@
-import 'dart:io';
+import 'package:granthprabandhan/compat/io.dart';
 
 import 'package:flutter/foundation.dart';
 
