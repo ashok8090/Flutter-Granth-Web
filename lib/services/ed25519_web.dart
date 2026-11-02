@@ -4,8 +4,6 @@ import 'dart:typed_data';
 import 'package:crypto/crypto.dart' as crypto;
 import 'package:ed25519_edwards/ed25519_edwards.dart' as ed;
 
-/// Same check as the phone file. The phone file uses 64-bit ints, which a
-/// browser cannot hold, so the website uses a pure-Dart implementation.
 Uint8List sha512(List<int> data) => Uint8List.fromList(crypto.sha512.convert(data).bytes);
 
 bool ed25519Verify(List<int> publicKey, List<int> message, List<int> sig) {

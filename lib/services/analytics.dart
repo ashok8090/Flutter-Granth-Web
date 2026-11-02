@@ -11,7 +11,10 @@ import '../config.dart';
 import '../models/structure.dart' show kOtherId;
 import '../state/router.dart';
 import 'device_profile.dart';
+import 'catalog_store.dart';
 import 'remote_config.dart';
+import 'shelves.dart';
+import 'local_stats.dart';
 import 'storage.dart';
 
 /// Anonymous usage counts for the admin's dashboard (docs/AI.md → "Analytics").
@@ -28,12 +31,12 @@ import 'storage.dart';
 /// inside `analytics_sample`.
 class Analytics with WidgetsBindingObserver {
   Analytics({Dio? dio, DateTime Function()? now, RemoteConfig Function()? config, String? url, bool? enabled, String? appKey})
-      : _dio = dio ?? Dio(BaseOptions(connectTimeout: const Duration(seconds: 8), sendTimeout: const Duration(seconds: 8), receiveTimeout: const Duration(seconds: 8))),
-        _now = now ?? DateTime.now,
-        _cfg = config ?? (() => RemoteConfig.I),
-        url = url ?? kEventsUrl,
-        appKey = (appKey ?? kAppKey).trim(),
-        enabledByBuild = enabled ?? !Platform.environment.containsKey('FLUTTER_TEST');
+    : _dio = dio ?? Dio(BaseOptions(connectTimeout: const Duration(seconds: 8), sendTimeout: const Duration(seconds: 8), receiveTimeout: const Duration(seconds: 8))),
+      _now = now ?? DateTime.now,
+      _cfg = config ?? (() => RemoteConfig.I),
+      url = url ?? kEventsUrl,
+      appKey = (appKey ?? kAppKey).trim(),
+      enabledByBuild = enabled ?? !Platform.environment.containsKey('FLUTTER_TEST');
 
   static Analytics I = Analytics();
 
@@ -68,6 +71,58 @@ class Analytics with WidgetsBindingObserver {
   final Map<String, int> _watchG = {}, _watchF = {}, _watchScr = {}; // milliseconds
   int _syncOk = 0, _syncFail = 0, _pdfOk = 0, _pdfFail = 0, _aiAsked = 0, _aiAnswered = 0, _aiCite = 0;
   final Map<String, int> _syncKinds = {}, _pdfKinds = {};
+  // Named events (CONTRACT §5.4): "name|ref" → count, plus up to 3 ai_fail texts per batch.
+  final Map<String, int> _named = {};
+  final List<Map<String, dynamic>> _fails = [];
+
+  /// Also forwarded here (Firebase Analytics), fire-and-forget; never throws into the app.
+  static void Function(String name, Map<String, Object> params)? forward;
+
+  /// Firebase `logScreenView(screenName)` (GA4 screen_view).
+  static void Function(String screen)? screenForward;
+  static const namedEvents = {'folder_open', 'granth_open', 'topic_open', 'praman_open', 'ai_answer', 'ai_fail', 'pdf_download', 'app_open'};
+
+  /// Firebase Analytics only (primary source): mirrors every /events counter as an event.
+  /// String values only; never throws into the app.
+  void fb(String name, [Map<String, String?> params = const {}]) {
+    try {
+      LocalStats.I.record(name);
+    } catch (_) {}
+    try {
+      forward?.call(name, {for (final e in params.entries) if (e.value != null) e.key: _cutP(e.value!)});
+    } catch (_) {}
+  }
+
+  static String _cutP(String v) => v.length > 100 ? v.substring(0, 100) : v;
+
+  /// Firebase param name for an event's id: folder_id / granth_id / praman_id (string values).
+  static String? firebaseIdParam(String name) => switch (name) {
+    'folder_open' => 'folder_id',
+    'granth_open' || 'pdf_download' => 'granth_id',
+    'topic_open' => 'topic_id',
+    'praman_open' => 'praman_id',
+    _ => null,
+  };
+
+  /// Counts a named event for `/events` and forwards it to Firebase Analytics.
+  /// [extra] (e.g. praman_open's `granth_id`/`folder_id`) goes to Firebase and, for `folder_id`,
+  /// into the /events entry as well (unknown fields are ignored by older servers).
+  void named(String name, {String? id, String? text, String? reason, Map<String, String?> extra = const {}}) {
+    try {
+      // Firebase Analytics is primary; app_open is logged automatically there.
+      fb(name, {?firebaseIdParam(name): id, ...extra, if (name == 'ai_fail') 'question': text, 'reason': reason});
+    } catch (_) {}
+    if (!enabled) return;
+    _rollDay();
+    final folder = extra['folder_id'];
+    final k = '$name|${id ?? ''}${folder == null || folder.isEmpty ? '' : '|$folder'}';
+    if (_named.containsKey(k) || _named.length < 50) _named[k] = math.min(1000, (_named[k] ?? 0) + 1);
+    if (name == 'ai_fail' && text != null && _fails.length < 3) {
+      _fails.add({'name': 'ai_fail', 'text': _cut(text, 500), if (reason != null) 'reason': _cut(reason, 120)});
+    }
+  }
+
+  static String _cut(String s, int n) => s.runes.length <= n ? s : String.fromCharCodes(s.runes.take(n));
 
   // ---- the segment being timed (foreground only) ----
   DateTime? _segStart;
@@ -162,27 +217,65 @@ class Analytics with WidgetsBindingObserver {
       _segGranth = r.granthId;
       _segFolder = r.religionId == null || r.groupId == null ? null : [r.religionId, r.groupId, r.subId].nonNulls.join('/');
       if (r.religionId == kOtherId) _segFolder = kOtherId;
+      // Every entry into a folder counts (also when the route opens a granth inside it), but
+      // moving between pramans/granths inside the same folder is not a new folder open.
+      final newFolder = _segFolder != null && (r.granthId == null || _segFolder != _prevFolder);
+      _prevFolder = _segFolder;
+      // Firebase (GA4) is the primary source: named()/fb() forward even when /events is off.
+      if (newFolder) named('folder_open', id: _segFolder);
+      if (r.granthId != null) named('granth_open', id: r.granthId);
+      if (r.topicId != null) named('topic_open', id: r.topicId);
+      if (r.pramanId != null) {
+        final gid = r.granthId ?? granthOfPraman(r.pramanId!);
+        named('praman_open', id: r.pramanId, extra: {'granth_id': gid, 'folder_id': _segFolder ?? folderOfGranth(gid)});
+      }
+      try {
+        screenForward?.call(_scr);
+      } catch (_) {}
       if (!enabled) return;
       _rollDay();
       if (r.granthId != null) _bump(_openG, r.granthId!);
       if (_segFolder != null) _bump(_openF, _segFolder!);
-      if (r.topicId != null) _bump(_openT, 't');
-      if (r.pramanId != null) _bump(_openP, 'p');
+      if (r.topicId != null) _bump(_openT, r.topicId!);
+      if (r.pramanId != null) _bump(_openP, r.pramanId!);
       if (_segStart == null && _foreground) _segStart = _now();
     } catch (e) {
       debugPrint('analytics: nav: $e');
     }
   }
 
+  String? _prevFolder;
+
+  /// Overridable in tests. The granth of a praman (catalog lookup), or null.
+  static String? Function(String pramanId) granthOfPraman = (id) {
+    try {
+      for (final p in CatalogStore.I.pramans) {
+        if (p.id == id) return p.granthId.isEmpty ? null : p.granthId;
+      }
+    } catch (_) {}
+    return null;
+  };
+
+  /// Overridable in tests. The folder (leaf key, or अन्य) a granth is placed in, or null.
+  static String? Function(String? granthId) folderOfGranth = (gid) {
+    if (gid == null) return null;
+    try {
+      return Shelves.indexFor(CatalogStore.I.granths).placements[gid]?.key;
+    } catch (_) {
+      return null;
+    }
+  };
+
   static String screenName(GRoute r) => switch (r.panel) {
-        Panel.dashboard => 'home',
-        Panel.topics => 'topics',
-        Panel.granths => r.religionId == null ? (r.flat ? 'granths' : 'folders') : 'folder',
-        Panel.pramans => (r.granthId != null || r.pramanId != null) ? 'reader' : 'pramans',
-        Panel.gallery => 'gallery',
-        Panel.ai => 'ai',
-        Panel.legal => r.legalPage == 'contacts' ? 'contacts' : 'legal',
-      };
+    Panel.dashboard => 'home',
+    Panel.topics => 'topics',
+    Panel.granths => r.religionId == null ? (r.flat ? 'granths' : 'folders') : 'folder',
+    Panel.pramans => (r.granthId != null || r.pramanId != null) ? 'reader' : 'pramans',
+    Panel.gallery => 'gallery',
+    Panel.ai => 'ai',
+    Panel.legal => r.legalPage == 'contacts' ? 'contacts' : 'legal',
+    Panel.page => r.legalPage ?? 'page',
+  };
 
   /// Counts are clamped at 5000 (the server's limit); time maps hold milliseconds and are clamped
   /// at 2 h (the server's 7200 s) via [cap].
@@ -200,12 +293,14 @@ class Analytics with WidgetsBindingObserver {
     final c = math.min(ms, 7200000);
     _rollDay();
     _fgMs += c;
+    fb('watch_time', {'screen': _scr, 'granth_id': _segGranth, 'folder_id': _segFolder, 'seconds': '${(c / 1000).round()}'});
     _bump(_watchScr, _scr, c, 7200000);
     if (_segGranth != null) _bump(_watchG, _segGranth!, c, 7200000);
     if (_segFolder != null) _bump(_watchF, _segFolder!, c, 7200000);
   }
 
   void syncResult(bool ok, [String kind = 'other']) {
+    fb(ok ? 'sync_ok' : 'sync_fail', {if (!ok) 'reason': _kind(kind)});
     if (!enabled) return;
     if (ok) {
       _syncOk = math.min(5000, _syncOk + 1);
@@ -216,6 +311,7 @@ class Analytics with WidgetsBindingObserver {
   }
 
   void pdfResult(bool ok, [String kind = 'other']) {
+    if (!ok) fb('pdf_fail', {'reason': _kind(kind)});
     if (!enabled) return;
     if (ok) {
       _pdfOk = math.min(5000, _pdfOk + 1);
@@ -226,14 +322,19 @@ class Analytics with WidgetsBindingObserver {
   }
 
   void aiAsked() {
+    fb('ai_ask');
     if (enabled) _aiAsked = math.min(5000, _aiAsked + 1);
   }
 
   void aiAnswered() {
     if (enabled) _aiAnswered = math.min(5000, _aiAnswered + 1);
+    named('ai_answer');
   }
 
-  void aiCiteTap() {
+  void aiFailed(String question, String reason) => named('ai_fail', text: question, reason: reason);
+
+  void aiCiteTap([String? granthId]) {
+    fb('cite_tap', {'granth_id': granthId});
     if (enabled) _aiCite = math.min(5000, _aiCite + 1);
   }
 
@@ -281,7 +382,14 @@ class Analytics with WidgetsBindingObserver {
     }
   }
 
-  bool get _hasData => _fgMs >= 1000 || _openG.isNotEmpty || _openF.isNotEmpty || _openT.isNotEmpty || _openP.isNotEmpty || _syncOk + _syncFail + _pdfOk + _pdfFail + _aiAsked + _aiAnswered + _aiCite > 0;
+  bool get _hasData =>
+      _fgMs >= 1000 ||
+      _openG.isNotEmpty ||
+      _openF.isNotEmpty ||
+      _openT.isNotEmpty ||
+      _openP.isNotEmpty ||
+      _syncOk + _syncFail + _pdfOk + _pdfFail + _aiAsked + _aiAnswered + _aiCite > 0 ||
+      _named.isNotEmpty;
 
   Map<String, int> _secs(Map<String, int> ms) {
     final e = ms.entries.toList()..sort((a, b) => b.value.compareTo(a.value));
@@ -297,28 +405,37 @@ class Analytics with WidgetsBindingObserver {
   }
 
   Map<String, dynamic> _build() => {
-        'v': 1,
-        'batch_id': _hex(16),
-        'iid': iid,
-        'app': kAppFull,
-        'app_version': kAppVersion,
-        'build': kBuildNumber,
-        'os': 'android',
-        'sdk': DeviceProfile.I.sdk.clamp(0, 99),
-        'cfg': _cfg().cfgVersion,
-        'day': _day,
-        'fg_s': math.min(21600, (_fgMs / 1000).round()),
-        'sessions': math.min(5000, _sessions),
-        'open': {'g': _top(_openG), 'f': _top(_openF), 't': _top(_openT), 'p': _top(_openP)},
-        'watch_s': {'g': _secs(_watchG), 'f': _secs(_watchF), 'scr': _secs(_watchScr)},
-        'sync': {'ok': _syncOk, 'fail': _syncFail, 'kinds': _top(_syncKinds)},
-        'pdf': {'ok': _pdfOk, 'fail': _pdfFail, 'kinds': _top(_pdfKinds)},
-        'ai': {'asked': _aiAsked, 'answered': _aiAnswered, 'cite_tap': _aiCite},
-      };
+    'v': 1,
+    'batch_id': _hex(16),
+    'iid': iid,
+    'app': kAppFull,
+    'app_version': kAppVersion,
+    'build': kBuildNumber,
+    'os': 'android',
+    'sdk': DeviceProfile.I.sdk.clamp(0, 99),
+    'cfg': _cfg().cfgVersion,
+    'day': _day,
+    'fg_s': math.min(21600, (_fgMs / 1000).round()),
+    'sessions': math.min(5000, _sessions),
+    'open': {'g': _top(_openG), 'f': _top(_openF), 't': _top(_openT), 'p': _top(_openP)},
+    'watch_s': {'g': _secs(_watchG), 'f': _secs(_watchF), 'scr': _secs(_watchScr)},
+    'sync': {'ok': _syncOk, 'fail': _syncFail, 'kinds': _top(_syncKinds)},
+    'pdf': {'ok': _pdfOk, 'fail': _pdfFail, 'kinds': _top(_pdfKinds)},
+    'ai': {'asked': _aiAsked, 'answered': _aiAnswered, 'cite_tap': _aiCite},
+    if (_named.isNotEmpty || _fails.isNotEmpty)
+      'events': [
+        for (final e in _named.entries)
+          if (e.key.split('|') case [final name, final id, ...final rest])
+            {'name': name, if (id.isNotEmpty) 'id': id, if (rest.isNotEmpty) 'folder_id': rest.join('|'), 'n': e.value},
+        ..._fails,
+      ],
+  };
 
   void _resetAcc() {
     _sessions = 0;
     _fgMs = 0;
+    _named.clear();
+    _fails.clear();
     for (final m in [_openG, _openF, _openT, _openP, _watchG, _watchF, _watchScr, _syncKinds, _pdfKinds]) {
       m.clear();
     }
@@ -359,7 +476,14 @@ class Analytics with WidgetsBindingObserver {
       final t = await Store.I.readText(queueFile);
       if (t != null) {
         final l = jsonDecode(t);
-        if (l is List) _queue = [for (final e in l) if (e is Map) e.cast<String, dynamic>()] + _queue;
+        if (l is List) {
+          _queue =
+              [
+                for (final e in l)
+                  if (e is Map) e.cast<String, dynamic>(),
+              ] +
+              _queue;
+        }
       }
     } catch (_) {}
   }
@@ -445,6 +569,7 @@ class Analytics with WidgetsBindingObserver {
     _day = '';
     _segStart = null;
     _lastRouteKey = '';
+    _prevFolder = null;
     _iid = null;
   }
 }

@@ -87,8 +87,9 @@ Tone _tone(String t) => switch (t) {
 String _count(int granths, int pramans) => pramans > 0 ? '$granths ग्रंथ • $pramans प्रमाण' : '$granths ग्रंथ';
 
 /// The folder grid uses the same persisted 1×1 / 2×2 / 3×3 choice as the granth cards
-/// (`Store.kGranthCols`, default 2×2), so one switch lays out the whole Granth tab.
-int folderCols() => UiPrefs.I.cols(Store.kGranthCols, allowed: const [1, 2, 3], fallback: 2);
+/// (`Store.kGranthCols`; until the user chooses: the admin's `ui.grid`, else 2×2), so one switch
+/// lays out the whole Granth tab.
+int folderCols() => UiPrefs.I.shelfCols;
 
 /// The size of a folder's picture for a column count: big and clear in 2×2.
 double folderPicSize(int cols) => switch (cols) {
@@ -289,7 +290,7 @@ class _FolderScreenState extends State<_FolderScreen> with LivePanel {
             leading: group == null ? ReligionSymbol(religion.icon, tone: _tone(religion.tone), size: 44) : GroupIcon(group.icon, size: 44),
             tools: Align(
               alignment: Alignment.centerLeft,
-              child: GridSwitch(options: const [1, 2, 3], value: cols, onChanged: (v) => UiPrefs.I.setCols(Store.kGranthCols, v)),
+              child: GridSwitch(locked: UiPrefs.I.gridLocked('shelves'), options: const [1, 2, 3], value: cols, onChanged: (v) => UiPrefs.I.setCols(Store.kGranthCols, v)),
             ),
             title: group?.title ?? religion.title,
             subtitle: group == null ? _count(inside.length, ShelfIndex.pramans(inside)) : '${religion.title} • ${_count(inside.length, ShelfIndex.pramans(inside))}',

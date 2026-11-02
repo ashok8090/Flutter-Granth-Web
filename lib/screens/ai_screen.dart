@@ -1,4 +1,5 @@
 import 'dart:math' as math;
+import 'dart:async';
 
 import 'package:flutter/material.dart';
 
@@ -9,9 +10,12 @@ import 'package:flutter/services.dart';
 import '../ai/ai_client.dart';
 import '../ai/chat_controller.dart';
 import '../ai/chat_store.dart';
+import '../ai/sanitize.dart';
 import '../models/models.dart';
 import '../services/analytics.dart';
+import '../services/ai_feedback.dart';
 import '../services/api.dart';
+import '../services/card_pdf.dart';
 import '../services/catalog_store.dart';
 import '../services/file_actions.dart';
 import '../state/places.dart';
@@ -133,10 +137,7 @@ class _AiPanelState extends State<AiPanel> {
   }
 
   @override
-  Widget build(BuildContext context) => ListenableBuilder(
-        listenable: RemoteConfig.I,
-        builder: (context, _) => RemoteConfig.I.aiEnabled ? _chat(context) : const _AiOff(),
-      );
+  Widget build(BuildContext context) => ListenableBuilder(listenable: RemoteConfig.I, builder: (context, _) => RemoteConfig.I.aiEnabled ? _chat(context) : const _AiOff());
 
   Widget _chat(BuildContext context) {
     final dx = panelDx();
@@ -144,63 +145,116 @@ class _AiPanelState extends State<AiPanel> {
       listenable: c,
       builder: (context, _) {
         final msgs = c.messages;
-        final lastAi = msgs.lastIndexWhere((m) => !m.isUser);
-        return SliverMainAxisGroup(slivers: [
-          SliverToBoxAdapter(
-            child: Entry(
-              index: 0,
-              dx: dx,
-              child: Padding(
-                padding: const EdgeInsets.only(bottom: 16),
-                child: PageHeader(
-                  tone: Tone.saffron,
-                  icon: 'sparkles',
-                  title: 'तत्त्व AI से पूछे',
-                  subtitle: 'अपना प्रश्न पूछिए, प्रमाण पाइए',
-                  tools: Wrap(spacing: 8, runSpacing: 8, children: [
-                    Pill(key: const ValueKey('ai-history'), icon: 'history', label: 'पुरानी बातचीत', fontSize: 13, padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8), onTap: () => openChatHistory(context)),
-                    Pill(key: const ValueKey('ai-new'), icon: 'plus', label: 'नई चैट', tone: PillTone.maroon, fontSize: 13, padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8), onTap: msgs.isEmpty ? null : c.newChat),
-                  ]),
+        final lastAi = msgs.lastIndexWhere((m) => !m.isUser && !m.isAdmin);
+        return SliverMainAxisGroup(
+          slivers: [
+            SliverToBoxAdapter(
+              child: Entry(
+                index: 0,
+                dx: dx,
+                child: Padding(
+                  padding: const EdgeInsets.only(bottom: 16),
+                  child: PageHeader(
+                    tone: Tone.saffron,
+                    icon: 'sparkles',
+                    title: 'तत्त्व AI से पूछे',
+                    subtitle: 'अपना प्रश्न पूछिए, प्रमाण पाइए',
+                    tools: Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: [
+                        Pill(
+                          key: const ValueKey('ai-history'),
+                          icon: 'history',
+                          label: 'पुरानी बातचीत',
+                          fontSize: 13,
+                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                          onTap: () => openChatHistory(context),
+                        ),
+                        Pill(
+                          key: const ValueKey('ai-gyan'),
+                          icon: 'book-open',
+                          label: 'ज्ञान चर्चा',
+                          fontSize: 13,
+                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                          onTap: c.sending ? null : _gyan,
+                        ),
+                        Pill(
+                          key: const ValueKey('ai-new'),
+                          icon: 'plus',
+                          label: 'नई चैट',
+                          tone: PillTone.maroon,
+                          fontSize: 13,
+                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                          onTap: msgs.isEmpty ? null : c.newChat,
+                        ),
+                      ],
+                    ),
+                  ),
                 ),
               ),
             ),
-          ),
-          if (msgs.isEmpty)
-            SliverToBoxAdapter(child: Entry(index: 1, dx: dx, child: _Intro(onAsk: (q) => askQuestion(q))))
-          else
-            SliverList.builder(
-              itemCount: msgs.length,
-              itemBuilder: (context, i) {
-                final m = msgs[i];
-                return Padding(
-                  padding: const EdgeInsets.only(bottom: 14),
-                  child: m.isUser
-                      ? UserBubble(m.text)
-                      : AnswerBubble(
-                          key: i == lastAi ? _lastAnswer : ValueKey('ans-${c.current?.id}-$i'),
-                          msg: m,
-                          question: i > 0 ? msgs[i - 1].text : '',
-                          find: _find,
-                        ),
-                );
-              },
-            ),
-          if (msgs.isNotEmpty)
-            SliverToBoxAdapter(
-              child: AnimatedSize(
-                duration: const Duration(milliseconds: 200),
-                alignment: Alignment.topCenter,
-                child: c.sending
-                    ? const Padding(padding: EdgeInsets.only(bottom: 14), child: ThinkingBubble())
-                    : (c.error != null || (c.current?.pending ?? false))
-                        ? Padding(padding: const EdgeInsets.only(bottom: 14), child: _ErrorCard(error: c.error, onRetry: c.retry))
-                        : const SizedBox(width: double.infinity),
+            if (msgs.isEmpty)
+              SliverToBoxAdapter(
+                child: Entry(
+                  index: 1,
+                  dx: dx,
+                  child: _Intro(onAsk: (q) => askQuestion(q)),
+                ),
+              )
+            else
+              SliverList.builder(
+                itemCount: msgs.length,
+                itemBuilder: (context, i) {
+                  final m = msgs[i];
+                  return Padding(
+                    padding: const EdgeInsets.only(bottom: 14),
+                    child: m.isUser
+                        ? UserBubble(m.text)
+                        : m.isAdmin
+                        ? AdminBubble(m)
+                        : AnswerBubble(key: i == lastAi ? _lastAnswer : ValueKey('ans-${c.current?.id}-$i'), msg: m, question: i > 0 ? msgs[i - 1].text : '', find: _find, chatId: c.current?.id ?? ''),
+                  );
+                },
               ),
-            ),
-        ]);
+            if (msgs.isNotEmpty)
+              SliverToBoxAdapter(
+                child: AnimatedSize(
+                  duration: const Duration(milliseconds: 200),
+                  alignment: Alignment.topCenter,
+                  child: c.sending
+                      ? const Padding(padding: EdgeInsets.only(bottom: 14), child: ThinkingBubble())
+                      : (c.error != null || (c.current?.pending ?? false))
+                      ? Padding(
+                          padding: const EdgeInsets.only(bottom: 14),
+                          child: _ErrorCard(error: c.error, onRetry: c.retry),
+                        )
+                      : const SizedBox(width: double.infinity),
+                ),
+              ),
+            if (msgs.isNotEmpty && !c.sending && c.offer != null && c.offer!.convId == c.current?.id)
+              SliverToBoxAdapter(
+                child: Padding(
+                  padding: const EdgeInsets.only(bottom: 14),
+                  child: AskAdminCard(offer: c.offer!, onYes: c.askAdmin, onNo: c.declineOffer),
+                ),
+              ),
+            if (c.gyan != null && c.gyan!.convId == c.current?.id)
+              SliverToBoxAdapter(
+                child: Padding(
+                  padding: const EdgeInsets.only(bottom: 14),
+                  child: SheetButton(key: const ValueKey('gyan-reveal'), label: 'उत्तर और प्रमाण देखें', icon: 'eye', primary: true, onTap: c.revealGyan),
+                ),
+              ),
+          ],
+        );
       },
     );
   }
+}
+
+Future<void> _gyan() async {
+  if (!await ChatController.I.startGyan()) Toast.show('अभी चर्चा के लिए कोई प्रश्न नहीं है');
 }
 
 /// Sends [q] unless the catalog is not there yet (the answer must rest on granth data).
@@ -222,37 +276,44 @@ class _Intro extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => GCard(
-        key: const ValueKey('ai-intro'),
-        padding: const EdgeInsets.fromLTRB(18, 20, 18, 20),
-        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Row(children: [
+    key: const ValueKey('ai-intro'),
+    padding: const EdgeInsets.fromLTRB(18, 20, 18, 20),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
             const IconBox(tone: Tone.saffron, icon: 'sparkles', size: 44, radius: 12, iconSize: 22),
             const SizedBox(width: 12),
-            Expanded(child: Text('नमस्ते! पूछिए', style: GText.display(size: 24, color: GColors.maroon, height: 1.3))),
-          ]),
-          const SizedBox(height: 12),
-          Text(
-            'अपना प्रश्न नीचे लिखिए। मैं इसी ऐप के ग्रंथों और प्रमाणों में से सबसे मिलते-जुलते प्रमाण खोजकर उत्तर दूँगा, और हर उत्तर के साथ वे प्रमाण भी दिखाऊँगा जिन पर वह टिका है।',
-            style: GText.sans(size: 15, color: GColors.muted, height: 1.65),
-          ),
-          const SizedBox(height: 14),
-          Text('कुछ सुझाव', style: GText.sans(size: 13, weight: FontWeight.w700, color: GColors.brown)),
-          const SizedBox(height: 8),
-          Wrap(spacing: 8, runSpacing: 8, children: [
+            Expanded(
+              child: Text('नमस्ते! पूछिए', style: GText.display(size: 24, color: GColors.maroon, height: 1.3)),
+            ),
+          ],
+        ),
+        const SizedBox(height: 12),
+        Text(
+          'अपना प्रश्न नीचे लिखिए। मैं इसी ऐप के ग्रंथों और प्रमाणों में से सबसे मिलते-जुलते प्रमाण खोजकर उत्तर दूँगा, और हर उत्तर के साथ वे प्रमाण भी दिखाऊँगा जिन पर वह टिका है।',
+          style: GText.sans(size: 15, color: GColors.muted, height: 1.65),
+        ),
+        const SizedBox(height: 14),
+        Text(
+          'कुछ सुझाव',
+          style: GText.sans(size: 13, weight: FontWeight.w700, color: GColors.brown),
+        ),
+        const SizedBox(height: 8),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
             for (final s in kAiSuggestions)
-              Pill(
-                key: ValueKey('ai-sug-$s'),
-                label: s,
-                tone: PillTone.topic,
-                fontSize: 14,
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
-                onTap: () => onAsk(s),
-              ),
-          ]),
-          const SizedBox(height: 14),
-          const _Caution(),
-        ]),
-      );
+              Pill(key: ValueKey('ai-sug-$s'), label: s, tone: PillTone.topic, fontSize: 14, padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9), onTap: () => onAsk(s)),
+          ],
+        ),
+        const SizedBox(height: 14),
+        const _Caution(),
+      ],
+    ),
+  );
 }
 
 /// "AI गलती कर सकता है, मूल ग्रंथ से मिलाएँ" + the policy link.
@@ -261,15 +322,21 @@ class _Caution extends StatelessWidget {
   final double size;
   @override
   Widget build(BuildContext context) => Pressable(
-        onTap: () => AppNav.I.openLink(kAiPolicyLink),
-        scale: 0.99,
-        child: Text.rich(
-          TextSpan(style: GText.sans(size: size, color: GColors.muted, height: 1.5), children: [
-            const TextSpan(text: 'AI गलती कर सकता है, मूल ग्रंथ से मिलाएँ · '),
-            TextSpan(text: 'AI उपयोग नीति', style: GText.sans(size: size, weight: FontWeight.w700, color: GColors.maroon, height: 1.5).copyWith(decoration: TextDecoration.underline)),
-          ]),
-        ),
-      );
+    onTap: () => AppNav.I.openLink(kAiPolicyLink),
+    scale: 0.99,
+    child: Text.rich(
+      TextSpan(
+        style: GText.sans(size: size, color: GColors.muted, height: 1.5),
+        children: [
+          const TextSpan(text: 'AI गलती कर सकता है, मूल ग्रंथ से मिलाएँ · '),
+          TextSpan(
+            text: 'AI उपयोग नीति',
+            style: GText.sans(size: size, weight: FontWeight.w700, color: GColors.maroon, height: 1.5).copyWith(decoration: TextDecoration.underline),
+          ),
+        ],
+      ),
+    ),
+  );
 }
 
 class UserBubble extends StatelessWidget {
@@ -278,34 +345,51 @@ class UserBubble extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Align(
-        alignment: Alignment.centerRight,
-        child: ConstrainedBox(
-          constraints: BoxConstraints(maxWidth: MediaQuery.sizeOf(context).width * 0.82),
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-            decoration: const BoxDecoration(
-              gradient: LinearGradient(begin: Alignment.topLeft, end: Alignment.bottomRight, colors: [GColors.maroonLight, GColors.maroon]),
-              borderRadius: BorderRadius.only(topLeft: Radius.circular(18), topRight: Radius.circular(18), bottomLeft: Radius.circular(18), bottomRight: Radius.circular(5)),
-            ),
-            child: SelectableText(text, style: GText.sans(size: 16, color: GColors.paper, height: 1.55)),
-          ),
+    alignment: Alignment.centerRight,
+    child: ConstrainedBox(
+      constraints: BoxConstraints(maxWidth: MediaQuery.sizeOf(context).width * 0.82),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+        decoration: const BoxDecoration(
+          gradient: LinearGradient(begin: Alignment.topLeft, end: Alignment.bottomRight, colors: [GColors.maroonLight, GColors.maroon]),
+          borderRadius: BorderRadius.only(topLeft: Radius.circular(18), topRight: Radius.circular(18), bottomLeft: Radius.circular(18), bottomRight: Radius.circular(5)),
         ),
-      );
+        child: SelectableText(text, style: GText.sans(size: 16, color: GColors.paper, height: 1.55)),
+      ),
+    ),
+  );
 }
 
 class _Avatar extends StatelessWidget {
   const _Avatar();
   @override
-  Widget build(BuildContext context) => const Padding(padding: EdgeInsets.only(top: 2), child: IconBox(tone: Tone.saffron, icon: 'sparkles', size: 32, radius: 10, iconSize: 17));
+  Widget build(BuildContext context) => const Padding(
+    padding: EdgeInsets.only(top: 2),
+    child: IconBox(tone: Tone.saffron, icon: 'sparkles', size: 32, radius: 10, iconSize: 17),
+  );
 }
 
-class AnswerBubble extends StatelessWidget {
-  const AnswerBubble({super.key, required this.msg, required this.question, required this.find});
+class AnswerBubble extends StatefulWidget {
+  const AnswerBubble({super.key, required this.msg, required this.question, required this.find, this.chatId = ''});
   final ChatMsg msg;
   final String question;
   final Praman? Function(int id) find;
+  final String chatId;
 
-  String get _plain => markdownPlain(msg.text);
+  @override
+  State<AnswerBubble> createState() => _AnswerBubbleState();
+}
+
+class _AnswerBubbleState extends State<AnswerBubble> {
+  final _card = GlobalKey();
+  bool _busy = false;
+
+  ChatMsg get msg => widget.msg;
+  String get _fkey => '${widget.chatId}-${msg.at}';
+
+  /// Never shows a raw "id-467": known ids become the praman's name, unknown ones are dropped.
+  String get _text => sanitizeAiText(msg.text, (id) => widget.find(id)?.title);
+  String get _plain => markdownPlain(_text);
 
   Future<void> _copy() async {
     await Clipboard.setData(ClipboardData(text: _plain));
@@ -313,44 +397,237 @@ class AnswerBubble extends StatelessWidget {
   }
 
   Future<void> _share() async {
-    final q = question.isEmpty ? '' : 'प्रश्न: $question\n\n';
+    final q = widget.question.isEmpty ? '' : 'प्रश्न: ${widget.question}\n\n';
     await FileActions.shareText('तत्त्व AI', '$q$_plain\n\n— तत्त्व AI, ग्रंथ प्रबंधन (AI गलती कर सकता है, मूल ग्रंथ से मिलाएँ)');
+  }
+
+  void _up() {
+    final was = AiFeedback.I.vote(_fkey) == 1;
+    AiFeedback.I.up(_fkey);
+    if (!was) Toast.show('धन्यवाद! आपकी राय दर्ज हो गई');
+  }
+
+  Future<void> _down() async {
+    if (AiFeedback.I.vote(_fkey) == -1) return Toast.show('यह उत्तर पहले ही admin को भेजा जा चुका है');
+    final r = await showPop<AiDownResult>(context, (ctx) => const AiReasonCard(), blurFocus: true);
+    if (r == null) return; // closed: nothing sent
+    if (r.correction) {
+      unawaited(AiFeedback.I.correct(_fkey, question: widget.question, answer: _plain, correction: r.text, chat: widget.chatId));
+      setState(() => _corrSent = true);
+      return Toast.show('धन्यवाद! आपका सुधार admin को जाँच के लिए भेजा जा रहा है');
+    }
+    unawaited(AiFeedback.I.down(_fkey, question: widget.question, answer: _plain, reason: r.text, chat: widget.chatId));
+    Toast.show('धन्यवाद! यह उत्तर admin को जाँच के लिए भेजा जा रहा है');
+  }
+
+  bool _corrSent = false;
+
+  /// Worker w3 detected "ye galat hai, asal mein …": send it to the admin as a correction.
+  void _sendCorrection() {
+    final c = msg.correction;
+    if (c == null || _corrSent) return;
+    if (c.text.trim().isEmpty) return Toast.show('सुधार खाली है');
+    unawaited(AiFeedback.I.correct(_fkey, question: c.question.isNotEmpty ? c.question : widget.question, answer: c.answer, correction: c.text, chat: widget.chatId));
+    setState(() => _corrSent = true);
+    Toast.show('धन्यवाद! आपका सुधार admin को जाँच के लिए भेजा जा रहा है');
+  }
+
+  Future<void> _cardPdf() async {
+    if (_busy) return;
+    final how = await showPop<String>(context, (ctx) => const CardPdfChoice());
+    if (how == null || !mounted) return;
+    setState(() => _busy = true);
+    try {
+      final f = await CardPdf.build(_card, CardPdf.fileName(widget.question.isEmpty ? 'तत्त्व AI उत्तर' : widget.question));
+      if (f == null) return Toast.show('कार्ड PDF नहीं बन सका');
+      if (how == 'save') {
+        Toast.show(await CardPdf.save(f) ? 'कार्ड PDF सेव हो गई' : 'सेव नहीं हो सका');
+      } else {
+        await CardPdf.share(f);
+      }
+    } catch (_) {
+      Toast.show('कार्ड PDF नहीं बन सका');
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
   }
 
   @override
   Widget build(BuildContext context) {
-    final cited = [for (final id in msg.cited) ?find(id)];
-    return Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      const _Avatar(),
-      const SizedBox(width: 8),
-      Expanded(
-        child: GCard(
-          padding: const EdgeInsets.fromLTRB(14, 12, 14, 10),
-          child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-            // Long-press selects a word and shows Copy; handles extend the selection.
-            SelectionArea(child: LightMarkdown(msg.text, size: 15.5)),
-            if (cited.isNotEmpty) ...[
-              const SizedBox(height: 12),
-              Text('आधार प्रमाण', style: GText.sans(size: 12.5, weight: FontWeight.w700, color: GColors.brown)),
-              const SizedBox(height: 6),
-              _Citations(cited),
-              for (final p in cited.take(2)) Padding(padding: const EdgeInsets.only(top: 8), child: PramanPreview(p)),
-            ],
-            const SizedBox(height: 8),
-            Row(children: [
-              Pill(key: const ValueKey('ai-copy'), icon: 'copy', label: 'कॉपी', onTap: _copy),
-              const SizedBox(width: 8),
-              Pill(key: const ValueKey('ai-share'), icon: 'share-2', label: 'शेयर', onTap: _share),
-            ]),
-          ]),
+    final cited = [for (final id in msg.cited) ?widget.find(id)];
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const _Avatar(),
+        const SizedBox(width: 8),
+        Expanded(
+          child: RepaintBoundary(
+            key: _card,
+            child: GCard(
+              padding: const EdgeInsets.fromLTRB(14, 12, 14, 10),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  // Long-press selects a word and shows Copy; handles extend the selection.
+                  SelectionArea(child: LightMarkdown(_text, size: 15.5)),
+                  if (msg.refs.isNotEmpty) ...[
+                    const SizedBox(height: 12),
+                    Text(
+                      'आधार प्रमाण',
+                      style: GText.sans(size: 12.5, weight: FontWeight.w700, color: GColors.brown),
+                    ),
+                    const SizedBox(height: 6),
+                    AiRefPills(msg.refs, find: widget.find),
+                    for (final p in cited.take(2)) Padding(padding: const EdgeInsets.only(top: 8), child: PramanPreview(p)),
+                  ] else if (cited.isNotEmpty) ...[
+                    const SizedBox(height: 12),
+                    Text(
+                      'आधार प्रमाण',
+                      style: GText.sans(size: 12.5, weight: FontWeight.w700, color: GColors.brown),
+                    ),
+                    const SizedBox(height: 6),
+                    _Citations(cited),
+                    for (final p in cited.take(2)) Padding(padding: const EdgeInsets.only(top: 8), child: PramanPreview(p)),
+                  ],
+                  if (msg.sources.isNotEmpty) ...[const SizedBox(height: 10), BookSourceLinks(msg.sources)],
+                  if (msg.correction != null && msg.correction!.text.trim().isNotEmpty && RemoteConfig.I.aiFlagsEnabled) ...[
+                    const SizedBox(height: 10),
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: Pill(
+                        key: const ValueKey('ai-send-correction'),
+                        icon: 'send',
+                        label: _corrSent ? 'सुधार भेजा ✓' : 'सुधार एडमिन को भेजें',
+                        tone: PillTone.topic,
+                        onTap: _corrSent ? null : _sendCorrection,
+                      ),
+                    ),
+                  ],
+                  const SizedBox(height: 8),
+                  ListenableBuilder(
+                    listenable: AiFeedback.I,
+                    builder: (context, _) {
+                      final v = AiFeedback.I.vote(_fkey);
+                      return Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: [
+                          Pill(key: const ValueKey('ai-up'), icon: 'thumbs-up', label: v == 1 ? 'पसंद ✓' : 'पसंद', tone: v == 1 ? PillTone.topic : PillTone.plain, onTap: _up),
+                          if (RemoteConfig.I.aiFlagsEnabled)
+                            Pill(key: const ValueKey('ai-down'), icon: 'thumbs-down', label: v == -1 ? 'भेजा ✓' : 'गलत', tone: v == -1 ? PillTone.topic : PillTone.plain, onTap: _down),
+                          Pill(key: const ValueKey('ai-share'), icon: 'share-2', label: 'शेयर', onTap: _share),
+                          Pill(key: const ValueKey('ai-copy'), icon: 'copy', label: 'कॉपी', onTap: _copy),
+                          Pill(key: const ValueKey('ai-card-pdf'), icon: 'file-text', label: _busy ? 'बन रही…' : 'कार्ड PDF', onTap: _cardPdf),
+                        ],
+                      );
+                    },
+                  ),
+                ],
+              ),
+            ),
+          ),
         ),
-      ),
-    ]);
+      ],
+    );
   }
 }
 
+/// What the 👎 sheet pops: a reason (`correction:false`) or a user correction (`correction:true`).
+typedef AiDownResult = ({String text, bool correction});
+
+/// 👎: an optional reason, then Send; or "सुधार भेजें" with the correct answer. Pops an [AiDownResult], or null when closed.
+class AiReasonCard extends StatefulWidget {
+  const AiReasonCard({super.key});
+  @override
+  State<AiReasonCard> createState() => _AiReasonCardState();
+}
+
+class _AiReasonCardState extends State<AiReasonCard> {
+  final _c = TextEditingController();
+  @override
+  void dispose() {
+    _c.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => FrostCard(
+    child: Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Text('इस उत्तर में क्या गलत है?', style: GText.script(size: 19, color: GColors.maroon)),
+        const SizedBox(height: 4),
+        Text('यह प्रश्न और उत्तर admin को जाँच के लिए भेजा जाएगा। कारण लिखना ज़रूरी नहीं।', style: GText.sans(size: 13.5, color: GColors.muted, height: 1.45)),
+        const SizedBox(height: 10),
+        TextField(
+          key: const ValueKey('ai-reason'),
+          controller: _c,
+          maxLines: 3,
+          minLines: 2,
+          maxLength: 2000,
+          style: GText.sans(size: 15),
+          decoration: InputDecoration(
+            hintText: 'कारण (वैकल्पिक) या सही जानकारी',
+            filled: true,
+            fillColor: GColors.cream,
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: const BorderSide(color: GColors.creamDark),
+            ),
+          ),
+        ),
+        const SizedBox(height: 6),
+        SheetButton(
+          key: const ValueKey('ai-reason-correct'),
+          icon: 'send',
+          label: 'सुधार भेजें',
+          onTap: () {
+            final t = _c.text.trim();
+            if (t.isEmpty) return Toast.show('पहले सही जानकारी लिखें, फिर सुधार भेजें');
+            Navigator.pop<AiDownResult>(context, (text: t, correction: true));
+          },
+        ),
+        const SizedBox(height: 8),
+        Row(
+          children: [
+            Expanded(
+              child: SheetButton(key: const ValueKey('ai-reason-cancel'), label: 'रहने दें', onTap: () => Navigator.pop(context)),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: SheetButton(key: const ValueKey('ai-reason-send'), label: 'भेजें', primary: true, onTap: () => Navigator.pop<AiDownResult>(context, (text: _c.text.trim(), correction: false))),
+            ),
+          ],
+        ),
+      ],
+    ),
+  );
+}
+
+/// Card PDF: share it or save it to the phone. Pops 'share' / 'save', or null.
+class CardPdfChoice extends StatelessWidget {
+  const CardPdfChoice({super.key});
+  @override
+  Widget build(BuildContext context) => FrostCard(
+    child: Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Text('कार्ड PDF', style: GText.script(size: 19, color: GColors.maroon)),
+        const SizedBox(height: 4),
+        Text('यह कार्ड जैसा ऐप में दिखता है, वैसा ही PDF बनेगा।', style: GText.sans(size: 13.5, color: GColors.muted, height: 1.45)),
+        const SizedBox(height: 12),
+        SheetButton(key: const ValueKey('card-pdf-share'), icon: 'share-2', label: 'शेयर करें', primary: true, onTap: () => Navigator.pop(context, 'share')),
+        const SizedBox(height: 8),
+        SheetButton(key: const ValueKey('card-pdf-save'), icon: 'folder-down', label: 'फ़ोन में सेव करें', onTap: () => Navigator.pop(context, 'save')),
+      ],
+    ),
+  );
+}
+
 void openPraman(Praman p) {
-  Analytics.I.aiCiteTap();
+  Analytics.I.aiCiteTap(p.granthId.isEmpty ? null : p.granthId);
   AppNav.I.openLink('#/pramans?id=${Uri.encodeComponent(p.id)}');
 }
 
@@ -360,23 +637,27 @@ class _Citations extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => LayoutBuilder(
-        builder: (context, c) => Wrap(spacing: 6, runSpacing: 6, children: [
-          for (final p in pramans.take(8))
-            ConstrainedBox(
-              constraints: BoxConstraints(maxWidth: c.maxWidth),
-              child: Pill(
-                key: ValueKey('ai-cite-${p.id}'),
-                label: '📖 ${p.granthTitle.isEmpty ? 'ग्रंथ' : p.granthTitle} › ${p.title}',
-                tone: PillTone.topic,
-                maxLines: 2,
-                fontSize: 12.5,
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
-                onTap: () => openPraman(p),
-              ),
+    builder: (context, c) => Wrap(
+      spacing: 6,
+      runSpacing: 6,
+      children: [
+        for (final p in pramans.take(8))
+          ConstrainedBox(
+            constraints: BoxConstraints(maxWidth: c.maxWidth),
+            child: Pill(
+              key: ValueKey('ai-cite-${p.id}'),
+              label: '📖 ${p.granthTitle.isEmpty ? 'ग्रंथ' : p.granthTitle} › ${p.title}',
+              tone: PillTone.topic,
+              maxLines: 2,
+              fontSize: 12.5,
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+              onTap: () => openPraman(p),
             ),
-          if (pramans.length > 8) Pill(label: '+${pramans.length - 8} और'),
-        ]),
-      );
+          ),
+        if (pramans.length > 8) Pill(label: '+${pramans.length - 8} और'),
+      ],
+    ),
+  );
 }
 
 /// A small card for one cited praman: thumbnail (when it has a picture) + title + a snippet.
@@ -394,17 +675,47 @@ class PramanPreview extends StatelessWidget {
       child: Container(
         key: ValueKey('ai-preview-${p.id}'),
         padding: const EdgeInsets.all(8),
-        decoration: BoxDecoration(color: GColors.cream, borderRadius: BorderRadius.circular(10), border: Border.all(color: GColors.creamDark)),
-        child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          if (img != null) ...[GranthImage(path: img, kind: ShotKind.thumb), const SizedBox(width: 10)],
-          Expanded(
-            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text(p.title, maxLines: 2, overflow: TextOverflow.ellipsis, style: GText.script(size: 15, color: GColors.maroon)),
-              if (snippet.isNotEmpty) Padding(padding: const EdgeInsets.only(top: 2), child: Text(snippet, maxLines: 2, overflow: TextOverflow.ellipsis, style: GText.sans(size: 13, color: GColors.muted, height: 1.45))),
-              Padding(padding: const EdgeInsets.only(top: 4), child: Text('खोलें ›', style: GText.sans(size: 12, weight: FontWeight.w700, color: GColors.saffronDark))),
-            ]),
-          ),
-        ]),
+        decoration: BoxDecoration(
+          color: GColors.cream,
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: GColors.creamDark),
+        ),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            if (img != null) ...[GranthImage(path: img, kind: ShotKind.thumb), const SizedBox(width: 10)],
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    p.title,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: GText.script(size: 15, color: GColors.maroon),
+                  ),
+                  if (snippet.isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 2),
+                      child: Text(
+                        snippet,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: GText.sans(size: 13, color: GColors.muted, height: 1.45),
+                      ),
+                    ),
+                  Padding(
+                    padding: const EdgeInsets.only(top: 4),
+                    child: Text(
+                      'खोलें ›',
+                      style: GText.sans(size: 12, weight: FontWeight.w700, color: GColors.saffronDark),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -440,34 +751,112 @@ class _ThinkingBubbleState extends State<ThinkingBubble> with SingleTickerProvid
   }
 
   @override
-  Widget build(BuildContext context) => Row(key: const ValueKey('ai-thinking'), children: [
-        const _Avatar(),
-        const SizedBox(width: 8),
-        Flexible(
-          child: Container(
+  Widget build(BuildContext context) => Row(
+    key: const ValueKey('ai-thinking'),
+    children: [
+      const _Avatar(),
+      const SizedBox(width: 8),
+      Flexible(
+        child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
-          decoration: BoxDecoration(color: GColors.paper, borderRadius: BorderRadius.circular(16), border: Border.all(color: GColors.creamDark)),
+          decoration: BoxDecoration(
+            color: GColors.paper,
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: GColors.creamDark),
+          ),
           child: AnimatedBuilder(
             animation: _a,
             builder: (context, _) {
               final t = _started ? _a.value : 0.0;
-              return Row(mainAxisSize: MainAxisSize.min, children: [
-                Flexible(child: Text('सोच रहा हूँ', maxLines: 1, overflow: TextOverflow.ellipsis, style: GText.sans(size: 15, color: GColors.muted, weight: FontWeight.w500))),
-                const SizedBox(width: 4),
-                for (var i = 0; i < 3; i++)
-                  Padding(
-                    padding: const EdgeInsets.only(left: 3),
-                    child: Opacity(
-                      opacity: _started ? (0.25 + 0.75 * math.max(0.0, math.sin((t * 2 - i * 0.28) * math.pi))).clamp(0.25, 1.0) : 0.7,
-                      child: Container(width: 6, height: 6, decoration: const BoxDecoration(color: GColors.saffron, shape: BoxShape.circle)),
+              return Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Flexible(
+                    child: Text(
+                      'सोच रहा हूँ',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: GText.sans(size: 15, color: GColors.muted, weight: FontWeight.w500),
                     ),
                   ),
-              ]);
+                  const SizedBox(width: 4),
+                  for (var i = 0; i < 3; i++)
+                    Padding(
+                      padding: const EdgeInsets.only(left: 3),
+                      child: Opacity(
+                        opacity: _started ? (0.25 + 0.75 * math.max(0.0, math.sin((t * 2 - i * 0.28) * math.pi))).clamp(0.25, 1.0) : 0.7,
+                        child: Container(
+                          width: 6,
+                          height: 6,
+                          decoration: const BoxDecoration(color: GColors.saffron, shape: BoxShape.circle),
+                        ),
+                      ),
+                    ),
+                ],
+              );
             },
           ),
-          ),
         ),
-      ]);
+      ),
+    ],
+  );
+}
+
+/// A message from the admin (an answer to a question the user sent), shown apart from AI answers.
+class AdminBubble extends StatelessWidget {
+  const AdminBubble(this.msg, {super.key});
+  final ChatMsg msg;
+
+  @override
+  Widget build(BuildContext context) => GCard(
+    key: const ValueKey('admin-msg'),
+    padding: const EdgeInsets.all(14),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Text(
+          'admin का संदेश आया',
+          style: GText.sans(size: 13, weight: FontWeight.w700, color: GColors.maroon),
+        ),
+        if (msg.ask != null) ...[const SizedBox(height: 4), Text('आपका प्रश्न: ${msg.ask}', style: GText.sans(size: 12.5, color: GColors.muted, height: 1.5))],
+        const SizedBox(height: 8),
+        SelectableText(msg.text, style: GText.sans(size: 15, color: GColors.brown, height: 1.6)),
+      ],
+    ),
+  );
+}
+
+/// "क्या आप यह प्रश्न admin को भेजना चाहेंगे?" with हाँ / नहीं.
+class AskAdminCard extends StatelessWidget {
+  const AskAdminCard({super.key, required this.offer, required this.onYes, required this.onNo});
+  final AdminOffer offer;
+  final VoidCallback onYes;
+  final VoidCallback onNo;
+
+  @override
+  Widget build(BuildContext context) => GCard(
+    key: const ValueKey('ask-admin'),
+    padding: const EdgeInsets.all(14),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Text(
+          'प्रश्न एडमिन को भेजें?',
+          style: GText.sans(size: 15, weight: FontWeight.w600, color: GColors.brown, height: 1.5),
+        ),
+        if (offer.message != null) ...[const SizedBox(height: 6), Text(offer.message!, style: GText.sans(size: 13, color: GColors.muted, height: 1.5))],
+        const SizedBox(height: 12),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            if (offer.canRetry) SheetButton(key: const ValueKey('ask-admin-yes'), label: offer.sending ? 'भेज रहे हैं…' : 'हाँ', icon: 'send', primary: true, enabled: !offer.sending, onTap: onYes),
+            SheetButton(key: const ValueKey('ask-admin-no'), label: 'नहीं', icon: 'x', onTap: onNo),
+          ],
+        ),
+      ],
+    ),
+  );
 }
 
 class _ErrorCard extends StatelessWidget {
@@ -476,26 +865,29 @@ class _ErrorCard extends StatelessWidget {
   final VoidCallback onRetry;
 
   @override
-  Widget build(BuildContext context) => Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        const _Avatar(),
-        const SizedBox(width: 8),
-        Expanded(
-          child: GCard(
-            key: const ValueKey('ai-error'),
-            padding: const EdgeInsets.all(14),
-            child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-              Text(
-                error?.message ?? 'इस प्रश्न का उत्तर अभी नहीं मिला। कृपया फिर कोशिश करें।',
-                style: GText.sans(size: 15, color: GColors.brown, height: 1.6),
-              ),
+  Widget build(BuildContext context) => Row(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      const _Avatar(),
+      const SizedBox(width: 8),
+      Expanded(
+        child: GCard(
+          key: const ValueKey('ai-error'),
+          padding: const EdgeInsets.all(14),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(error?.message ?? 'इस प्रश्न का उत्तर अभी नहीं मिला। कृपया फिर कोशिश करें।', style: GText.sans(size: 15, color: GColors.brown, height: 1.6)),
               const SizedBox(height: 4),
               Text('आपका प्रश्न ऊपर सुरक्षित है — दोबारा लिखने की ज़रूरत नहीं।', style: GText.sans(size: 12.5, color: GColors.muted, height: 1.5)),
               const SizedBox(height: 12),
               SheetButton(key: const ValueKey('ai-retry'), label: 'फिर कोशिश करें', icon: 'refresh-cw', primary: true, onTap: onRetry),
-            ]),
+            ],
           ),
         ),
-      ]);
+      ),
+    ],
+  );
 }
 
 // ---------------------------------------------------------------------------------------
@@ -525,50 +917,67 @@ class _AiComposerState extends State<AiComposer> {
 
   @override
   Widget build(BuildContext context) => Container(
-        decoration: BoxDecoration(
-          color: GColors.cream,
-          border: const Border(top: BorderSide(color: GColors.creamDark)),
-          boxShadow: [BoxShadow(color: GColors.shadow(0.08), blurRadius: 14, offset: const Offset(0, -4))],
-        ),
-        child: SafeArea(
-          top: false,
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(12, 8, 12, 6),
-            child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-              ListenableBuilder(
-                listenable: Listenable.merge([c, c.input]),
-                builder: (context, _) {
-                  final empty = c.input.text.trim().isEmpty;
-                  final can = !empty && !c.sending;
-                  final n = c.input.text.length;
-                  return Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
+    decoration: BoxDecoration(
+      color: GColors.cream,
+      border: const Border(top: BorderSide(color: GColors.creamDark)),
+      boxShadow: [BoxShadow(color: GColors.shadow(0.08), blurRadius: 14, offset: const Offset(0, -4))],
+    ),
+    child: SafeArea(
+      top: false,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(12, 8, 12, 6),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            ListenableBuilder(
+              listenable: Listenable.merge([c, c.input]),
+              builder: (context, _) {
+                final empty = c.input.text.trim().isEmpty;
+                final can = !empty && !c.sending;
+                final n = c.input.text.length;
+                return Row(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
                     Expanded(
                       child: Container(
-                        decoration: BoxDecoration(color: GColors.paper, borderRadius: BorderRadius.circular(22), border: Border.all(color: GColors.saffron.withValues(alpha: 0.7), width: 1.3)),
+                        decoration: BoxDecoration(
+                          color: GColors.paper,
+                          borderRadius: BorderRadius.circular(22),
+                          border: Border.all(color: GColors.saffron.withValues(alpha: 0.7), width: 1.3),
+                        ),
                         padding: const EdgeInsets.fromLTRB(16, 2, 12, 2),
-                        child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.end, children: [
-                          TextField(
-                            key: const ValueKey('ai-input'),
-                            controller: c.input,
-                            minLines: 1,
-                            maxLines: 4,
-                            maxLength: kQuestionMax,
-                            keyboardType: TextInputType.multiline,
-                            textInputAction: TextInputAction.newline,
-                            textCapitalization: TextCapitalization.sentences,
-                            cursorColor: GColors.saffron,
-                            style: GText.sans(size: 16, height: 1.5),
-                            buildCounter: (context, {required currentLength, required isFocused, required maxLength}) => null,
-                            decoration: InputDecoration(
-                              isDense: true,
-                              border: InputBorder.none,
-                              hintText: 'अपना प्रश्न लिखिए…',
-                              hintStyle: GText.sans(size: 16, color: GColors.muted),
-                              contentPadding: const EdgeInsets.symmetric(vertical: 10),
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          crossAxisAlignment: CrossAxisAlignment.end,
+                          children: [
+                            TextField(
+                              key: const ValueKey('ai-input'),
+                              controller: c.input,
+                              minLines: 1,
+                              maxLines: 4,
+                              maxLength: kQuestionMax,
+                              keyboardType: TextInputType.multiline,
+                              textInputAction: TextInputAction.newline,
+                              textCapitalization: TextCapitalization.sentences,
+                              cursorColor: GColors.saffron,
+                              style: GText.sans(size: 16, height: 1.5),
+                              buildCounter: (context, {required currentLength, required isFocused, required maxLength}) => null,
+                              decoration: InputDecoration(
+                                isDense: true,
+                                border: InputBorder.none,
+                                hintText: 'अपना प्रश्न लिखिए…',
+                                hintStyle: GText.sans(size: 16, color: GColors.muted),
+                                contentPadding: const EdgeInsets.symmetric(vertical: 10),
+                              ),
                             ),
-                          ),
-                          if (n > kQuestionMax - 100) Padding(padding: const EdgeInsets.only(bottom: 4), child: Text('$n/$kQuestionMax', style: GText.sans(size: 11, color: n >= kQuestionMax ? GColors.maroon : GColors.muted))),
-                        ]),
+                            if (n > kQuestionMax - 100)
+                              Padding(
+                                padding: const EdgeInsets.only(bottom: 4),
+                                child: Text('$n/$kQuestionMax', style: GText.sans(size: 11, color: n >= kQuestionMax ? GColors.maroon : GColors.muted)),
+                              ),
+                          ],
+                        ),
                       ),
                     ),
                     const SizedBox(width: 8),
@@ -587,15 +996,17 @@ class _AiComposerState extends State<AiComposer> {
                             : GIcon('send', size: 21, color: can ? GColors.paper : GColors.muted),
                       ),
                     ),
-                  ]);
-                },
-              ),
-              const SizedBox(height: 5),
-              const Padding(padding: EdgeInsets.symmetric(horizontal: 6), child: _Caution(size: 11.5)),
-            ]),
-          ),
+                  ],
+                );
+              },
+            ),
+            const SizedBox(height: 5),
+            const Padding(padding: EdgeInsets.symmetric(horizontal: 6), child: _Caution(size: 11.5)),
+          ],
         ),
-      );
+      ),
+    ),
+  );
 }
 
 // ---------------------------------------------------------------------------------------
@@ -628,45 +1039,62 @@ class _HistorySheet extends StatelessWidget {
           if (c.chats.isEmpty)
             Padding(
               padding: const EdgeInsets.symmetric(vertical: 24),
-              child: Text('अभी कोई बातचीत सेव नहीं है।', textAlign: TextAlign.center, style: GText.sans(size: 15, color: GColors.muted)),
+              child: Text(
+                'अभी कोई बातचीत सेव नहीं है।',
+                textAlign: TextAlign.center,
+                style: GText.sans(size: 15, color: GColors.muted),
+              ),
             )
           else ...[
             for (final i in c.chats)
               Padding(
                 key: ValueKey('chat-${i.id}'),
                 padding: const EdgeInsets.only(bottom: 8),
-                child: Row(children: [
-                  Expanded(
-                    child: Pressable(
-                      onTap: () async {
-                        Navigator.pop(context);
-                        await c.open(i.id);
-                      },
-                      scale: 0.985,
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                        decoration: BoxDecoration(
-                          color: i.id == c.current?.id ? GColors.pillTopic : GColors.cream,
-                          borderRadius: BorderRadius.circular(12),
-                          border: Border.all(color: GColors.creamDark),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Pressable(
+                        onTap: () async {
+                          Navigator.pop(context);
+                          await c.open(i.id);
+                        },
+                        scale: 0.985,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                          decoration: BoxDecoration(
+                            color: i.id == c.current?.id ? GColors.pillTopic : GColors.cream,
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(color: GColors.creamDark),
+                          ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                i.title.isEmpty ? 'नई बातचीत' : i.title,
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                                style: GText.sans(size: 15, weight: FontWeight.w600, color: GColors.maroon, height: 1.4),
+                              ),
+                              const SizedBox(height: 2),
+                              Text('${_when(i.updated)} · ${i.count} संदेश', style: GText.sans(size: 12, color: GColors.muted)),
+                            ],
+                          ),
                         ),
-                        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                          Text(i.title.isEmpty ? 'नई बातचीत' : i.title, maxLines: 2, overflow: TextOverflow.ellipsis, style: GText.sans(size: 15, weight: FontWeight.w600, color: GColors.maroon, height: 1.4)),
-                          const SizedBox(height: 2),
-                          Text('${_when(i.updated)} · ${i.count} संदेश', style: GText.sans(size: 12, color: GColors.muted)),
-                        ]),
                       ),
                     ),
-                  ),
-                  const SizedBox(width: 6),
-                  Pressable(
-                    key: ValueKey('chat-del-${i.id}'),
-                    onTap: () async {
-                      if (await confirmPop(context, 'यह बातचीत मिटा दें?')) await c.delete(i.id);
-                    },
-                    child: const Padding(padding: EdgeInsets.all(10), child: GIcon('trash-2', size: 20, color: GColors.maroon)),
-                  ),
-                ]),
+                    const SizedBox(width: 6),
+                    Pressable(
+                      key: ValueKey('chat-del-${i.id}'),
+                      onTap: () async {
+                        if (await confirmPop(context, 'यह बातचीत मिटा दें?')) await c.delete(i.id);
+                      },
+                      child: const Padding(
+                        padding: EdgeInsets.all(10),
+                        child: GIcon('trash-2', size: 20, color: GColors.maroon),
+                      ),
+                    ),
+                  ],
+                ),
               ),
             const SizedBox(height: 4),
             SheetButton(
@@ -687,18 +1115,116 @@ class _HistorySheet extends StatelessWidget {
   }
 }
 
-
 /// `ai_enabled: false` in the remote config: a friendly note instead of the chat.
 class _AiOff extends StatelessWidget {
   const _AiOff();
   @override
   Widget build(BuildContext context) => SliverToBoxAdapter(
-        child: EmptyState(
-          key: const ValueKey('ai-off'),
-          title: 'तत्त्व AI अभी बंद है',
-          body: 'यह सुविधा कुछ समय के लिए रोकी गई है। कृपया थोड़ी देर बाद फिर देखिए।',
-          actionLabel: 'होम पर जाएँ',
-          onAction: () => AppNav.I.go('#/dashboard'),
+    child: EmptyState(
+      key: const ValueKey('ai-off'),
+      title: 'तत्त्व AI अभी बंद है',
+      body: 'यह सुविधा कुछ समय के लिए रोकी गई है। कृपया थोड़ी देर बाद फिर देखिए।',
+      actionLabel: 'होम पर जाएँ',
+      onAction: () => AppNav.I.go('#/dashboard'),
+    ),
+  );
+}
+
+/// Worker w3 `refs`: tappable pills that open app routes. Cited refs are prominent (topic tone,
+/// bold); related ones (topic/granth of a cited praman, suggestions) are plain and smaller.
+class AiRefPills extends StatelessWidget {
+  const AiRefPills(this.refs, {super.key, required this.find});
+  final List<AiRef> refs;
+  final Praman? Function(int id) find;
+
+  static String _icon(String t) => switch (t) {
+    'praman' => '📖',
+    'topic' => '🏷️',
+    'granth' => '📚',
+    _ => '📝',
+  };
+
+  String _label(AiRef r) {
+    var t = r.title;
+    if (r.type == 'praman') {
+      final p = find(r.id);
+      if (t.isEmpty) t = p?.title ?? '';
+      if (p != null && p.granthTitle.isNotEmpty && !t.contains('›')) t = '${p.granthTitle} › $t';
+    }
+    if (t.isEmpty) {
+      t = switch (r.type) {
+        'praman' => 'प्रमाण',
+        'topic' => 'विषय',
+        'granth' => 'ग्रंथ',
+        _ => 'एडमिन नोट',
+      };
+    }
+    return '${_icon(r.type)} $t';
+  }
+
+  void _open(AiRef r) {
+    final route = r.route;
+    if (route == null) return;
+    if (r.type == 'praman') Analytics.I.aiCiteTap(find(r.id)?.granthId.isEmpty == false ? find(r.id)!.granthId : null);
+    AppNav.I.openLink(route);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final sorted = [...refs.where((r) => r.cited), ...refs.where((r) => !r.cited)];
+    return LayoutBuilder(
+      builder: (context, c) => Wrap(
+        key: const ValueKey('ai-refs'),
+        spacing: 6,
+        runSpacing: 6,
+        children: [
+          for (final (i, r) in sorted.indexed)
+            ConstrainedBox(
+              constraints: BoxConstraints(maxWidth: c.maxWidth),
+              child: Pill(
+                key: ValueKey('ai-ref-$i-${r.type}-${r.id}'),
+                label: _label(r),
+                tone: r.cited ? PillTone.topic : PillTone.plain,
+                maxLines: 2,
+                fontSize: r.cited ? 12.5 : 11.5,
+                weight: r.cited ? FontWeight.w700 : FontWeight.w500,
+                padding: r.cited ? const EdgeInsets.symmetric(horizontal: 10, vertical: 7) : const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+                onTap: r.route == null ? null : () => _open(r),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+/// SRJM book citations under an answer: small links; a tap opens the url outside the app.
+class BookSourceLinks extends StatelessWidget {
+  const BookSourceLinks(this.sources, {super.key});
+  final List<BookSource> sources;
+
+  @override
+  Widget build(BuildContext context) => Column(
+    key: const ValueKey('ai-book-sources'),
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      Text(
+        'पुस्तक स्रोत',
+        style: GText.sans(size: 12.5, weight: FontWeight.w700, color: GColors.brown),
+      ),
+      const SizedBox(height: 4),
+      for (final (i, s) in sources.indexed)
+        InkWell(
+          key: ValueKey('ai-book-src-$i'),
+          onTap: s.hasLink ? () => FileActions.openUrl(s.url) : null,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 3),
+            child: Text(
+              '📖 ${s.label}',
+              style: GText.sans(size: 12.5, color: s.hasLink ? GColors.maroon : GColors.muted, height: 1.4).copyWith(decoration: s.hasLink ? TextDecoration.underline : null),
+            ),
+          ),
         ),
-      );
+    ],
+  );
 }

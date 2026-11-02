@@ -648,8 +648,11 @@ class LogoIcon extends StatelessWidget {
 
 /// Animated `.grid-switch` — the maroon pill slides between "1×1 / 2×2 / 3×3".
 class GridSwitch extends StatelessWidget {
-  const GridSwitch({super.key, required this.options, required this.value, required this.onChanged});
+  const GridSwitch({super.key, required this.options, required this.value, required this.onChanged, this.locked = false});
   final List<int> options;
+
+  /// The admin forces this grid: shown, not changeable.
+  final bool locked;
   final int value;
   final ValueChanged<int> onChanged;
 
@@ -658,7 +661,7 @@ class GridSwitch extends StatelessWidget {
     const w = 44.0;
     const h = 36.0;
     final idx = math.max(0, options.indexOf(value));
-    return Container(
+    final box = Container(
       padding: const EdgeInsets.all(3),
       decoration: BoxDecoration(color: GColors.paper, border: Border.all(color: GColors.creamDark), borderRadius: BorderRadius.circular(10)),
       child: SizedBox(
@@ -684,7 +687,7 @@ class GridSwitch extends StatelessWidget {
                     selected: options[i] == value,
                     child: TapTarget(
                       key: ValueKey('grid-${options[i]}'),
-                      onTap: () => onChanged(options[i]),
+                      onTap: locked ? null : () => onChanged(options[i]),
                       child: SizedBox(
                         width: w,
                         height: h,
@@ -705,6 +708,7 @@ class GridSwitch extends StatelessWidget {
         ),
       ),
     );
+    return locked ? Tooltip(message: 'एडमिन द्वारा नियंत्रित', child: Opacity(key: const ValueKey('grid-locked'), opacity: 0.6, child: box)) : box;
   }
 }
 

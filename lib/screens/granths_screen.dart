@@ -85,7 +85,7 @@ class _GranthsPanelState extends State<GranthsPanel> with LivePanel {
       stableSort(rows, (a, b) => numericCompare(a.position, b.position));
     }
     _log.track(_q, rows.length);
-    final cols = UiPrefs.I.cols(Store.kGranthCols, allowed: const [1, 2, 3], fallback: 2);
+    final cols = UiPrefs.I.granthCols;
     final dx = panelDx();
     return SliverMainAxisGroup(slivers: [
       StickyHeader(
@@ -108,7 +108,7 @@ class _GranthsPanelState extends State<GranthsPanel> with LivePanel {
               ),
             ),
             tools: Tools(
-              grid: GridSwitch(options: const [1, 2, 3], value: cols, onChanged: (v) => UiPrefs.I.setCols(Store.kGranthCols, v)),
+              grid: GridSwitch(locked: UiPrefs.I.gridLocked('granths'), options: const [1, 2, 3], value: cols, onChanged: (v) => UiPrefs.I.setCols(Store.kGranthCols, v)),
               search: SearchField(placeholder: 'ग्रंथ का नाम — gita, kabir', initial: _q, onChanged: (v) { Places.setQuery(widget.placeKey, v); setState(() => _q = v); }),
             ),
           ),

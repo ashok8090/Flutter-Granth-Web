@@ -22,6 +22,10 @@ class Store {
   /// slow cold start) or cannot be opened at all; they are written through when it is ready.
   final Map<String, Object> _mem = {};
 
+  /// Bumps when the preferences file is opened late (after the first screen was drawn), so
+  /// everything that read a setting before reads it again (grid, terms, text size…).
+  final ValueNotifier<int> adopted = ValueNotifier(0);
+
   static const kTopicCols = 'topic-cols';
   static const kGranthCols = 'granth-cols';
   static const kPramanCols = 'praman-cols';
@@ -29,12 +33,20 @@ class Store {
   static const kUiCols = 'ui-cols';
   static const kPdfStyle = 'pdf-style';
   static const kLook = 'granth-look';
+  static const kLoginSeen = 'granth-login-seen';
 
   // Extra settings (not in the web app). Stored as text like the others.
   static const kTextSize = 'granth-text-size';
   static const kWifiOnly = 'granth-wifi-only';
+  static const kAutoDownload = 'granth-auto-download';
   static const kAutoSync = 'granth-auto-sync';
+
+  /// Round-3: bottom tab bar on ('1') / off ('0'); unset = off (or the admin's `ui.taskbar` default).
+  static const kTaskbar = 'granth-taskbar';
+  /// Round-3: the terms version the signed-in user accepted (text, e.g. '1'); unset = never.
+  static const kTermsAccepted = 'granth-terms-accepted';
   static const kKeepAwake = 'granth-keep-awake';
+
   /// Round 8: "एनिमेशन" चालू ('1', default) / कम ('0') — the decorative entrance animations.
   static const kAnimations = 'granth-animations';
 
@@ -103,6 +115,7 @@ class Store {
       if (v is String) p.setString(e.key, v);
       if (v is int) p.setInt(e.key, v);
     }
+    adopted.value++;
   }
 
   /// For tests: use an in-memory prefs instance and a temp directory.

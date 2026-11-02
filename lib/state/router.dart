@@ -5,7 +5,8 @@ import 'package:flutter/foundation.dart';
 import '../services/events.dart';
 import '../services/storage.dart';
 
-enum Panel { dashboard, topics, granths, pramans, gallery, ai, legal }
+/// [Panel.page]: a full page named by [GRoute.legalPage] (`settings`, `account`, `support`).
+enum Panel { dashboard, topics, granths, pramans, gallery, ai, legal, page }
 
 /// `ig()` — the parsed hash route of the web app (`#/pramans?topic=…`).
 @immutable
@@ -36,6 +37,12 @@ class GRoute {
     if (path.startsWith('/gallery')) return const GRoute(Panel.gallery);
     if (path.startsWith('/ai')) return const GRoute(Panel.ai);
     if (path.startsWith('/legal')) return GRoute(Panel.legal, legalPage: v('p'));
+    for (final p in const ['settings', 'account', 'support', 'today']) {
+      if (path.startsWith('/$p')) {
+        final s = p == 'settings' ? v('s') : null;
+        return GRoute(Panel.page, legalPage: s == null || s.isEmpty ? p : 'settings/$s');
+      }
+    }
     if (path.startsWith('/topics')) return const GRoute(Panel.topics);
     if (path.startsWith('/granths')) {
       if (v('all') == '1') return const GRoute(Panel.granths, flat: true);
@@ -55,8 +62,8 @@ class GRoute {
   String _folderKey() => flat
       ? '|all'
       : religionId == null
-          ? ''
-          : '|${[religionId, groupId, subId].nonNulls.join('/')}';
+      ? ''
+      : '|${[religionId, groupId, subId].nonNulls.join('/')}';
 
   /// `#/granths?r=…&g=…&s=…` for a folder level.
   static String folderHash({String? religion, String? group, String? sub}) {
@@ -109,7 +116,12 @@ class AppNav extends ChangeNotifier {
       final raw = Store.I.getString('granth-nav');
       if (raw != null) {
         final j = jsonDecode(raw);
-        if (j is List) stack = [for (final e in j) if (e is String && e.startsWith('#/') && e != saved) e];
+        if (j is List) {
+          stack = [
+            for (final e in j)
+              if (e is String && e.startsWith('#/') && e != saved) e,
+          ];
+        }
       }
     } catch (_) {}
     // A stack that does not start at the dashboard cannot be trusted to lead anywhere sane.
@@ -134,6 +146,8 @@ class AppNav extends ChangeNotifier {
           if (r.subId != null) out.add(GRoute.folderHash(religion: r.religionId, group: r.groupId));
         }
       }
+    } else if (r.panel == Panel.page && (r.legalPage?.startsWith('settings/') ?? false)) {
+      out.add('#/settings'); // a settings folder: Back returns to the folder list
     } else if (r.panel == Panel.legal) {
       if (r.legalPage != null) out.add('#/legal');
     } else if (r.panel == Panel.pramans && (r.topicId != null || r.granthId != null) && r.pramanId == null) {
@@ -264,7 +278,6 @@ String? hashFromLink(Uri u) {
   final id = q['id'] ?? '';
   final has = topic.isNotEmpty || granth.isNotEmpty || id.isNotEmpty;
   final appLink = (u.scheme == 'granth') || ((u.scheme == 'https' || u.scheme == 'http') && u.host == 'granth.grok.me' && u.path.startsWith('/open'));
-  // The website is opened at /app/index.html?granth=… as well as /open.
   if (!appLink && !(kIsWeb && has)) return null;
   if (topic.isNotEmpty) return '#/pramans?topic=$topic';
   if (granth.isNotEmpty) return '#/pramans?granth=$granth';

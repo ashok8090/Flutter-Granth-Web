@@ -74,6 +74,8 @@ void main() {
       await tester.binding.setSurfaceSize(const Size(412, 915));
       await tester.pumpWidget(const GranthApp(splash: false, links: false));
       await frames(tester, 5);
+      AppNav.I.go('#/settings?s=sync'); // Round-2: the sync strip lives in Settings → सिंक / ऑफ़लाइन.
+      await frames(tester, 5);
       expect(find.byKey(const ValueKey('sync-card')), findsNothing);
 
       await tester.tap(find.byKey(const ValueKey('sync-button')));
@@ -296,7 +298,8 @@ void main() {
       await tester.pumpWidget(const GranthApp(splash: false, links: false));
       await frames(tester, 12);
       final cardSize = tester.getSize(find.text('Granths').first);
-      await pinch(tester, const Offset(206, 450), 100, 250);
+      // Zoom around the card itself (the dashboard now has the daily card above it).
+      await pinch(tester, tester.getCenter(find.text('Granths').first), 100, 250);
       await tester.pump(const Duration(milliseconds: 300));
       expect(AppZoom.current.value.scale, greaterThan(2));
       // Layout did not re-flow (same logical size), only the paint is scaled.

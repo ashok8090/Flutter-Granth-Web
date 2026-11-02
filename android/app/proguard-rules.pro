@@ -4,3 +4,9 @@
 -keep class com.wnm.granthprabandhan.MainActivity { *; }
 -keep class com.wnm.granthprabandhan.PageSyncService { *; }
 -keep class com.wnm.granthprabandhan.HlFileProvider { *; }
+
+# Round-2: Google sign-in (google_sign_in 7.x → Credential Manager). Keep the Play Services
+# credential provider and Google ID classes so R8 can not strip them from release builds.
+-if class androidx.credentials.CredentialManager
+-keep class androidx.credentials.playservices.** { *; }
+-keep class com.google.android.libraries.identity.googleid.** { *; }

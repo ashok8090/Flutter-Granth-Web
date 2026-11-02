@@ -290,6 +290,8 @@ void main() {
       AppZoom.current.value = const ZoomView(1.8, Offset(-120, -200));
       await t.pump();
       await scrollDown(t, 2600);
+      // Let the cards that just scrolled in finish their entry slide before measuring.
+      await settle(t, 14);
       final y0 = listPos(t).pixels;
       expect(y0, greaterThan(1200));
       final re = RegExp(r'^ग्रंथ \d+$');

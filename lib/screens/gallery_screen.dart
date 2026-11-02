@@ -94,7 +94,7 @@ class _GalleryPanelState extends State<GalleryPanel> with LivePanel {
 
   @override
   Widget build(BuildContext context) {
-    final cols = UiPrefs.I.cols(Store.kGalleryCols, allowed: const [1, 2], fallback: 2);
+    final cols = UiPrefs.I.pageCols('gallery', Store.kGalleryCols);
     final rows = searchFields(
       _items.where((e) => (_folder.isEmpty || e.folderId == _folder) && e.kind == _tab).toList(),
       _q,
@@ -127,7 +127,7 @@ class _GalleryPanelState extends State<GalleryPanel> with LivePanel {
               title: 'Gallery',
               subtitle: 'सेव चित्र और PDF',
               tools: Tools(
-                grid: GridSwitch(options: const [1, 2], value: cols, onChanged: (v) => UiPrefs.I.setCols(Store.kGalleryCols, v)),
+                grid: GridSwitch(locked: UiPrefs.I.gridLocked('gallery'), options: const [1, 2], value: cols, onChanged: (v) => UiPrefs.I.setCols(Store.kGalleryCols, v)),
                 search: SearchField(placeholder: 'गैलरी खोजें — mans, गीता', initial: _q, onChanged: (v) { Places.setQuery('gallery-list-place', v); setState(() => _q = v); }),
               ),
             ),

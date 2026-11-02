@@ -20,10 +20,119 @@ class AiTurn {
 
 /// What the Worker answered.
 class AiAnswer {
-  const AiAnswer({required this.answer, required this.cited, required this.provider});
+  const AiAnswer({
+    required this.answer,
+    required this.cited,
+    required this.provider,
+    this.notFound,
+    this.found,
+    this.reason,
+    this.askAdmin,
+    this.sources = const [],
+    this.refs = const [],
+    this.correction,
+  });
   final String answer;
   final List<int> cited;
   final String provider;
+
+  /// Explicit server "not found" signal; null when the Worker did not send one.
+  final bool? notFound;
+
+  /// CONTRACT "AI not-found signal": `found`, `reason` (no_source|out_of_scope|low_confidence), `ask_admin`.
+  final bool? found;
+  final String? reason;
+  final bool? askAdmin;
+
+  /// SRJM book citations `sources:[{book,chapter,url}]`.
+  final List<BookSource> sources;
+
+  /// Tappable app references `refs:[{type, id, title, route, cited}]` (praman / topic / granth / note).
+  final List<AiRef> refs;
+
+  /// Worker detected a user correction ("ye galat hai, asal mein …"): offer "सुधार एडमिन को भेजें".
+  final AiCorrection? correction;
+
+  /// Whether to offer "प्रश्न एडमिन को भेजें?": `ask_admin:true`, else `found` alone decides; null → heuristic.
+  bool? get offerAdmin => askAdmin == true ? true : (found != null ? !found! : notFound);
+}
+
+/// One SRJM book citation under an answer.
+class BookSource {
+  const BookSource({required this.book, this.chapter = '', this.url = ''});
+  final String book, chapter, url;
+  String get label => chapter.isEmpty ? book : '$book · $chapter';
+  bool get hasLink {
+    final u = Uri.tryParse(url);
+    return u != null && (u.scheme == 'https' || u.scheme == 'http') && u.host.isNotEmpty;
+  }
+
+  Map<String, String> toJson() => {'book': book, if (chapter.isNotEmpty) 'chapter': chapter, if (url.isNotEmpty) 'url': url};
+  static BookSource? fromJson(Object? j) {
+    if (j is! Map) return null;
+    String s(Object? v, int max) => v is String ? (v.trim().length > max ? v.trim().substring(0, max) : v.trim()) : (v is num ? '$v' : '');
+    final b = s(j['book'], 120);
+    if (b.isEmpty) return null;
+    return BookSource(book: b, chapter: s(j['chapter'], 120), url: s(j['url'], 500));
+  }
+}
+
+/// One tappable app reference under an answer. `route` is an in-app hash route:
+/// praman `#/pramans?id=ID`, topic `#/pramans?topic=ID`, granth `#/pramans?granth=ID`; note has none.
+class AiRef {
+  const AiRef({required this.type, required this.id, this.title = '', this.route, this.cited = false});
+  final String type; // praman | topic | granth | note
+  final int id;
+  final String title;
+  final String? route;
+  final bool cited; // false = related (topic/granth of a cited praman, or a suggested praman)
+  Map<String, Object> toJson() => {'type': type, 'id': id, if (title.isNotEmpty) 'title': title, 'route': ?route, 'cited': cited};
+  static AiRef? fromJson(Object? j) {
+    if (j is! Map) return null;
+    final t = j['type'], id = j['id'];
+    if (t is! String || !const {'praman', 'topic', 'granth', 'note'}.contains(t) || id is! int || id <= 0) return null;
+    final r = j['route'];
+    final okRoute = r is String && RegExp(r'^#/pramans\?(id|topic|granth)=\d+$').hasMatch(r);
+    final title = j['title'] is String ? (j['title'] as String).trim() : '';
+    return AiRef(type: t, id: id, title: title.length > 120 ? title.substring(0, 120) : title, route: okRoute ? r : null, cited: j['cited'] == true);
+  }
+}
+
+List<AiRef> parseRefs(Object? v) => [
+  if (v is List)
+    for (final e in v.take(12)) ?AiRef.fromJson(e),
+];
+
+class AiCorrection {
+  const AiCorrection({required this.question, required this.answer, required this.text});
+  final String question, answer, text;
+  Map<String, Object> toJson() => {'detected': true, 'question': question, 'answer': answer, 'text': text};
+  static AiCorrection? fromJson(Object? j) {
+    if (j is! Map || j['detected'] != true) return null;
+    String s(Object? v) => v is String ? v : '';
+    return AiCorrection(question: s(j['question']), answer: s(j['answer']), text: s(j['text']));
+  }
+}
+
+List<BookSource> parseSources(Object? v) => [
+  if (v is List)
+    for (final e in v.take(10)) ?BookSource.fromJson(e),
+];
+
+/// Reads the Worker's explicit not-found signal (format still TBD, so several shapes are accepted):
+/// `not_found: true`, `found: false`, `answer_found: false`, `cannot_answer: true`,
+/// `status`/`result: "not_found"`. Returns null when absent so the heuristic decides.
+bool? parseNotFound(Map json) {
+  bool? b(Object? v) => v is bool ? v : (v == 'true' ? true : (v == 'false' ? false : null));
+  final nf = b(json['not_found']) ?? b(json['notFound']) ?? b(json['cannot_answer']);
+  if (nf != null) return nf;
+  final f = b(json['found']) ?? b(json['answer_found']);
+  if (f != null) return !f;
+  for (final k in const ['status', 'result']) {
+    final v = json[k];
+    if (v is String && v.toLowerCase().replaceAll('-', '_') == 'not_found') return true;
+  }
+  return null;
 }
 
 enum AiFailure { offline, timeout, rateLimited, unavailable, rejected, tooLarge, badReply }
@@ -73,14 +182,14 @@ List<int> parseCited(Object? raw) {
 }
 
 String _messageFor(AiFailure k) => switch (k) {
-      AiFailure.offline => 'इंटरनेट से जुड़ नहीं पाया। कनेक्शन जाँचकर फिर कोशिश करें।',
-      AiFailure.timeout => 'उत्तर आने में बहुत समय लग रहा है। कृपया फिर कोशिश करें।',
-      AiFailure.rateLimited => 'अभी बहुत प्रश्न आ रहे हैं। थोड़ी देर बाद फिर कोशिश करें।',
-      AiFailure.unavailable => 'AI सेवा अभी उपलब्ध नहीं है। थोड़ी देर बाद फिर कोशिश करें।',
-      AiFailure.rejected => 'यह प्रश्न स्वीकार नहीं हुआ। कृपया इसे छोटा या अलग तरह से लिखें।',
-      AiFailure.tooLarge => 'प्रश्न बहुत बड़ा है। कृपया इसे छोटा करके पूछें।',
-      AiFailure.badReply => 'AI से समझ न आने वाला उत्तर मिला। कृपया फिर कोशिश करें।',
-    };
+  AiFailure.offline => 'इंटरनेट से जुड़ नहीं पाया। कनेक्शन जाँचकर फिर कोशिश करें।',
+  AiFailure.timeout => 'उत्तर आने में बहुत समय लग रहा है। कृपया फिर कोशिश करें।',
+  AiFailure.rateLimited => 'अभी बहुत प्रश्न आ रहे हैं। थोड़ी देर बाद फिर कोशिश करें।',
+  AiFailure.unavailable => 'AI सेवा अभी उपलब्ध नहीं है। थोड़ी देर बाद फिर कोशिश करें।',
+  AiFailure.rejected => 'यह प्रश्न स्वीकार नहीं हुआ। कृपया इसे छोटा या अलग तरह से लिखें।',
+  AiFailure.tooLarge => 'प्रश्न बहुत बड़ा है। कृपया इसे छोटा करके पूछें।',
+  AiFailure.badReply => 'AI से समझ न आने वाला उत्तर मिला। कृपया फिर कोशिश करें।',
+};
 
 /// Turns an HTTP status + body into an answer or an [AiException]. Pure, so it is unit-tested.
 AiAnswer parseAskResponse(int status, String body) {
@@ -95,7 +204,18 @@ AiAnswer parseAskResponse(int status, String body) {
       final a = json['answer'];
       if (a is String && a.trim().isNotEmpty) {
         final p = json['provider'];
-        return AiAnswer(answer: a.trim(), cited: parseCited(json['cited']), provider: p is String ? p : '');
+        return AiAnswer(
+          answer: a.trim(),
+          cited: parseCited(json['cited']),
+          provider: p is String ? p : '',
+          notFound: parseNotFound(json),
+          found: json['found'] is bool ? json['found'] as bool : null,
+          reason: json['reason'] is String && (json['reason'] as String).isNotEmpty ? json['reason'] as String : null,
+          askAdmin: json['ask_admin'] is bool ? json['ask_admin'] as bool : null,
+          sources: parseSources(json['sources']),
+          refs: parseRefs(json['refs']),
+          correction: AiCorrection.fromJson(json['correction']),
+        );
       }
     }
     throw AiException(AiFailure.badReply, _messageFor(AiFailure.badReply), status: status);
@@ -110,12 +230,8 @@ AiAnswer parseAskResponse(int status, String body) {
 }
 
 class AiClient {
-  AiClient({
-    String? endpoint,
-    this.timeout = const Duration(seconds: 45),
-    this.backoff = const Duration(milliseconds: 1500),
-    this.header = kAiClientHeader,
-  }) : endpoint = (endpoint ?? RemoteConfig.I.aiEndpoint ?? kAiEndpoint).replaceAll(RegExp(r'/+$'), '');
+  AiClient({String? endpoint, this.timeout = const Duration(seconds: 45), this.backoff = const Duration(milliseconds: 1500), this.header = kAiClientHeader})
+    : endpoint = (endpoint ?? RemoteConfig.I.aiEndpoint ?? kAiEndpoint).replaceAll(RegExp(r'/+$'), '');
 
   final String endpoint;
   final Duration timeout;
@@ -128,7 +244,9 @@ class AiClient {
     try {
       return await _once(body);
     } on AiException catch (e) {
-      if (!e.retryable) rethrow;
+      // A timeout already waited the full [timeout]: no silent second wait (up to ~90 s of spinner).
+      // The user gets the error with a Retry button instead.
+      if (!e.retryable || e.kind == AiFailure.timeout) rethrow;
       await Future<void>.delayed(e.kind == AiFailure.rateLimited ? backoff * 2 : backoff);
       return _once(body);
     }

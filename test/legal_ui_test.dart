@@ -93,7 +93,7 @@ void main() {
 
   testWidgets('Settings → कानूनी और नीतियाँ: the three rows open the list, the policy and विशेष जानकार; Back goes one screen back', (t) async {
     await openApp(t);
-    await openSettings(t);
+    await openSettings(t, 'about');
     for (final (key, expectKey) in [
       ('set-privacy', 'legal-body-privacy'),
       ('set-legal', 'legal-privacy'),
@@ -109,8 +109,8 @@ void main() {
       await t.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 300))); // Back is debounced 260 ms
       AppNav.I.back();
       await settle(t, 6);
-      expect(AppNav.I.route.panel, Panel.dashboard, reason: 'after Back from $key');
-      if (key != 'set-contacts') await openSettings(t);
+      expect(AppNav.I.route.panel, Panel.page, reason: 'after Back from $key: the settings page');
+      expect(find.byKey(const ValueKey('settings-page')), findsOneWidget);
     }
     await t.pump(const Duration(seconds: 8));
   });

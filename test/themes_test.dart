@@ -54,7 +54,7 @@ bool isLook(BoxDecoration d, String look) {
 int count(WidgetTester t, String look) => decos(t).where((d) => isLook(d, look)).length;
 
 Future<void> pickLook(WidgetTester t, String id) async {
-  await openSettings(t);
+  await openSettings(t, 'about');
   for (var i = 0; i < 5; i++) {
     await fingerTap(t, find.byKey(const ValueKey('set-version')), wobble: Offset.zero);
     await t.pump(const Duration(milliseconds: 60));
@@ -88,7 +88,9 @@ void main() {
 
       // Dashboard: 3 stat cards + note card.
       expect(count(t, id), greaterThanOrEqualTo(4), reason: 'dashboard');
-      // Sync strip + its card.
+      // Sync strip + its card (Round-2: in Settings → सिंक / ऑफ़लाइन).
+      AppNav.I.go('#/settings?s=sync');
+      await settle(t, 6);
       await t.tap(find.byKey(const ValueKey('sync-card-toggle')));
       await settle(t, 6);
       final card = find.byKey(const ValueKey('sync-card'));

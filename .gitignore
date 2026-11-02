@@ -59,3 +59,7 @@ key.properties
 *.aab
 /android/app/release/
 test/fixtures/*.whl
+android/build/
+
+# Firebase config (contains API keys)
+android/app/google-services.json

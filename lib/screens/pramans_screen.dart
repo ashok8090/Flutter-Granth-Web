@@ -74,7 +74,7 @@ class _PramansPanelState extends State<PramansPanel> with LivePanel {
     }
     final rows = searchRows(_filtered, _q, CatalogStore.I.pramanDoc);
     _log.track(_q, rows.length);
-    final cols = UiPrefs.I.cols(Store.kPramanCols, allowed: const [1, 2], fallback: 2);
+    final cols = UiPrefs.I.pageCols('pramans', Store.kPramanCols);
     final dx = panelDx();
     return SliverMainAxisGroup(slivers: [
       StickyHeader(
@@ -87,7 +87,7 @@ class _PramansPanelState extends State<PramansPanel> with LivePanel {
             title: 'प्रमाण',
             subtitle: 'शास्त्र प्रमाण',
             tools: Tools(
-              grid: GridSwitch(options: const [1, 2], value: cols, onChanged: (v) => UiPrefs.I.setCols(Store.kPramanCols, v)),
+              grid: GridSwitch(locked: UiPrefs.I.gridLocked('pramans'), options: const [1, 2], value: cols, onChanged: (v) => UiPrefs.I.setCols(Store.kPramanCols, v)),
               search: SearchField(placeholder: 'प्रमाण खोजें — mans, मृत्यु', initial: _q, onChanged: (v) { Places.setQuery(_key, v); setState(() => _q = v); }),
             ),
           ),

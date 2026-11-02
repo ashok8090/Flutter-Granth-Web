@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:granthprabandhan/state/router.dart';
 import 'package:granthprabandhan/main.dart';
 import 'package:granthprabandhan/models/models.dart';
 import 'package:granthprabandhan/screens/home_shell.dart';
@@ -295,6 +296,8 @@ void main() {
     final net = FakeNet(s);
     net.gate = Completer<void>();
     await tester.pumpWidget(const GranthApp(splash: false, links: false));
+    await tester.pump(const Duration(milliseconds: 300));
+    AppNav.I.go('#/settings?s=sync'); // Round-2: the sync strip lives in Settings → सिंक / ऑफ़लाइन.
     await tester.pump(const Duration(milliseconds: 300));
     SyncStrip.open.value = true;
     s.savePages();
